@@ -1,0 +1,10 @@
+[theme]
+primaryColor = "#10233F"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#10233F"
+font = "sans serif"
+
+[client]
+pageTitle = "Employee Attendance"
+pageIcon = "🏢"
