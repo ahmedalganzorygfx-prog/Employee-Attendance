@@ -27,7 +27,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
-page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"])
+
+# إجبار الصفحة الافتراضية لتكون تسجيل الحضور والانصراف فور فتح التطبيق
+if "nav_page" not in st.session_state:
+    st.session_state["nav_page"] = "تسجيل الحضور/الانصراف"
+
+page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"], key="nav_selection")
 
 # ==========================================
 # 3. قواعد البيانات وتحديث البنية تلقائياً
@@ -49,7 +54,7 @@ cursor.execute('''
     )
 ''')
 
-# 2. فحص وإنشاء جدول الموظفين الآمن من الأخطاء
+# 2. جدول الموظفين
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS employees (
         emp_code TEXT PRIMARY KEY,
@@ -93,7 +98,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية والدالة المصححة
+# 4. الدوال البرمجية
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -111,12 +116,10 @@ def get_user_ip():
         return None
 
 def get_active_employees_by_code():
-    """دالة مصححة لتفادي خطأ العمود المفقود وإعادة الهيكلة آلياً"""
     try:
         df_emp = pd.read_sql_query("SELECT emp_code, emp_name FROM employees WHERE is_active = 1", conn)
         return dict(zip(df_emp['emp_code'], df_emp['emp_name']))
     except Exception:
-        # معالجة تعارض البنية القديمة
         cursor.execute("DROP TABLE IF EXISTS employees")
         cursor.execute('''
             CREATE TABLE employees (
