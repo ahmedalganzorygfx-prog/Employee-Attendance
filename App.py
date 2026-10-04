@@ -28,14 +28,13 @@ st.markdown("""
 
 st.sidebar.title(PROJECT_NAME)
 
-# إجبار الصفحة الافتراضية لتكون تسجيل الحضور والانصراف فور فتح التطبيق
 if "nav_page" not in st.session_state:
     st.session_state["nav_page"] = "تسجيل الحضور/الانصراف"
 
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"], key="nav_selection")
 
 # ==========================================
-# 3. قواعد البيانات وتحديث البنية تلقائياً
+# 3. قواعد البيانات وإدارة الإعدادات المصححة
 # ==========================================
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
@@ -54,7 +53,7 @@ cursor.execute('''
     )
 ''')
 
-# 2. جدول الموظفين
+# 2. جدول بيانات الموظفين
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS employees (
         emp_code TEXT PRIMARY KEY,
@@ -74,6 +73,9 @@ cursor.execute('''
 ''')
 conn.commit()
 
+# الرابط الفعلي المباشر لتطبيقك
+REAL_APP_URL = "https://employee-attendance-dv932asxnr57mmovkwpltp.streamlit.app/"
+
 # الإعدادات الافتراضية
 DEFAULT_SETTINGS = {
     "branch_ip": "41.38.200.191",
@@ -81,24 +83,27 @@ DEFAULT_SETTINGS = {
     "branch_lon": "31.3681",
     "max_distance": "50.0",
     "disable_wifi_check": "0",
-    "app_url": "https://employee-attendance.streamlit.app"
+    "app_url": REAL_APP_URL
 }
 
+# إدخال الإعدادات الافتراضية فقط إذا لم تكن موجودة مسبقاً (INSERT OR IGNORE)
 for key, val in DEFAULT_SETTINGS.items():
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, val))
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, str(val)))
 conn.commit()
 
 def get_setting(key):
     cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
     res = cursor.fetchone()
-    return res[0] if res else DEFAULT_SETTINGS.get(key, "")
+    if res and res[0]:
+        return res[0]
+    return DEFAULT_SETTINGS.get(key, "")
 
 def set_setting(key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية
+# 4. الدوال البرمجية المساعدة
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -142,7 +147,7 @@ def get_active_employees_by_code():
         return dict(zip(df_emp['emp_code'], df_emp['emp_name']))
 
 # ==========================================
-# 5. الشاشات الرئيسية
+# 5. الشاشات الرئيسية للتطبيق
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
     if os.path.exists(LOGO_PATH):
@@ -331,7 +336,7 @@ elif page == "لوحة تحكم الإدارة":
                         st.warning("تم حذف الموظف من قاعدة البيانات!")
                         st.rerun()
 
-        # ----------------- إعدادات النظام والـ QR -----------------
+        # ----------------- إعدادات النظام والـ QR المصححة -----------------
         with tab3:
             st.subheader("⚙ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
             
@@ -365,11 +370,14 @@ elif page == "لوحة تحكم الإدارة":
                     set_setting("app_url", new_url.strip())
                     set_setting("disable_wifi_check", "1" if disable_wifi else "0")
                     
-                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتطبيقها فوراً!")
+                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتحديث الـ QR Code!")
                     st.rerun()
 
             st.markdown("---")
             st.subheader("📱 رمز QR الموحد للفرع (جاهز للطباعة)")
+            
+            # جلب الرابط الحالي والمحدث بدقة
+            active_qr_url = get_setting("app_url")
             
             qr = qrcode.QRCode(
                 version=1,
@@ -377,7 +385,7 @@ elif page == "لوحة تحكم الإدارة":
                 box_size=10,
                 border=3
             )
-            qr.add_data(current_url)
+            qr.add_data(active_qr_url)
             qr.make(fit=True)
             img_qr = qr.make_image(fill_color="#10233F", back_color="white")
             
@@ -388,7 +396,7 @@ elif page == "لوحة تحكم الإدارة":
             with col_qr1:
                 st.image(qr_buf.getvalue(), caption="رمز QR للفرع", width=220)
             with col_qr2:
-                st.write("اطبع هذا الرمز الموحد وعلقه بجوار مدخل الفرع أو الراوتر ليمسحه العاملون بالجوال.")
+                st.write(f"الرابط المضمّن في الـ QR حالياً:\n`{active_qr_url}`")
                 st.download_button(
                     label="📥 تحميل صورة الـ QR للطباعة",
                     data=qr_buf.getvalue(),
