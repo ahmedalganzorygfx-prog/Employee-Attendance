@@ -8,18 +8,23 @@ from streamlit_js_eval import get_geolocation
 import os
 
 # ==========================================
-# 1. إعدادات المشروع والشعار
+# 1. الإعدادات العامة للشعار والفرع
 # ==========================================
-PROJECT_NAME = "Employee Attendance System"
-LOGO_PATH = "logo.png"  # مسار صورة الشعار داخل مجلد المشروع
+PROJECT_NAME = "Employee Attendance"
+LOGO_PATH = "logo.png"
 
+# إحداثيات موقع الفرع (قم بتحديثها طبقاً لموقعك الفعلي)
 BRANCH_LAT = 30.0444
 BRANCH_LON = 31.2357
 MAX_DISTANCE_METERS = 50.0
+
+# الـ Public IP لشبكة Wi-Fi الفرع
 BRANCH_PUBLIC_IP = "197.35.120.45"
 
+# كلمة مرور الإدارة
 ADMIN_PASSWORD = "admin_giza_2026"
 
+# قائمة الموظفين الخمسة المعتمدين بالفرع
 EMPLOYEES = {
     "01012345671": "أحمد حسني",
     "01012345672": "محمد علي",
@@ -31,13 +36,12 @@ EMPLOYEES = {
 # ==========================================
 # 2. تهيئة الواجهة والشعار
 # ==========================================
-st.set_page_config(page_title="Employee Attendance", page_icon="🏢", layout="centered")
+st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
-# عرض الشعار في القائمة الجانبية
 if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, use_container_width=True)
 else:
-    st.sidebar.title("🏢 Employee Attendance")
+    st.sidebar.title(f"🏢 {PROJECT_NAME}")
 
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"])
 
@@ -79,13 +83,12 @@ conn.commit()
 # 4. الشاشات الرئيسية
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
-    # عرض الشعار الرئيسي في منتصف الصفحة
     if os.path.exists(LOGO_PATH):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.image(LOGO_PATH, width=180)
             
-    st.title("Employee Attendance")
+    st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور الذكية بالفرع")
     st.info("📲 يرجى الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
     
@@ -101,9 +104,9 @@ if page == "تسجيل الحضور/الانصراف":
         is_gps_ok = (distance <= MAX_DISTANCE_METERS)
         
         if not is_wifi_ok:
-            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (عنوان IP الحالي: {user_ip})")
+            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (IP الحالي: {user_ip})")
         elif not is_gps_ok:
-            st.error(f"⛔ تعذر التسجيل: موقعك يبعد عن الفرع بـ {int(distance)} متراً. النطاق المسموح: {int(MAX_DISTANCE_METERS)}m")
+            st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(MAX_DISTANCE_METERS)}m")
         else:
             st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
             
@@ -137,7 +140,7 @@ elif page == "لوحة تحكم الإدارة":
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=120)
         
-    st.title("🔒 لوحة الإدارة - Employee Attendance")
+    st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
     pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
     
