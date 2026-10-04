@@ -21,27 +21,7 @@ ADMIN_PASSWORD = "admin_giza_2026"
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
 st.markdown("""
-    <style>
-        html, body, [class*="css"], .stApp {
-            direction: rtl;
-            text-align: right;
-        }
-        section[data-testid="stSidebar"] {
-            direction: rtl;
-            text-align: right;
-        }
-        .stTextInput input, .stSelectbox select, .stRadio div {
-            direction: rtl;
-            text-align: right;
-        }
-        .stDataFrame {
-            direction: rtl;
-        }
-        .element-container, .stAlert {
-            direction: rtl;
-            text-align: right;
-        }
-    </style>
+    
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
@@ -86,17 +66,18 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# الإعدادات الافتراضية الأولية
+# الإعدادات الافتراضية المحدثة للفرع
 DEFAULT_SETTINGS = {
-    "branch_ip": "34.190.100.134",
-    "branch_lat": "30.0444",
-    "branch_lon": "31.2357",
+    "branch_ip": "41.38.200.191",
+    "branch_lat": "30.2104",
+    "branch_lon": "31.3681",
     "max_distance": "50.0",
-    "disable_wifi_check": "0" # 0 = مفعل, 1 = معطل
+    "disable_wifi_check": "0"  # 0 = مفعل, 1 = معطل
 }
 
+# تحديث/تثبيت الإعدادات في قاعدة البيانات
 for key, val in DEFAULT_SETTINGS.items():
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val))
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, val))
 conn.commit()
 
 def get_setting(key):
@@ -223,8 +204,7 @@ elif page == "لوحة تحكم الإدارة":
             st.session_state["admin_logged_in"] = False
             st.rerun()
 
-        # 3 تبويبات شاملة
-        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙️️ إعدادات النظام والشبكة"])
+        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙ إعدادات النظام والشبكة"])
         
         # ----------------- التبويب الأول: سجلات الحضور -----------------
         with tab1:
