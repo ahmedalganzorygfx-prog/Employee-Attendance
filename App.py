@@ -18,45 +18,19 @@ BRANCH_LAT = 30.0444
 BRANCH_LON = 31.2357
 MAX_DISTANCE_METERS = 50.0
 
-# الـ Public IP لشبكة Wi-Fi الفرع
-BRANCH_PUBLIC_IP = "197.35.120.45"
+# الـ Public IP المحدث لشبكة Wi-Fi الفرع
+BRANCH_PUBLIC_IP = "34.190.100.134"
 
 # كلمة مرور الإدارة
-ADMIN_PASSWORD = "123456"
+ADMIN_PASSWORD = "admin_giza_2026"
 
 # ==========================================
 # 2. تهيئة الواجهة ودعم اتجاه اليمين إلى اليسار (RTL)
 # ==========================================
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
-# إضافة CSS لضبط محاذاة كافة العناصر من اليمين إلى اليسار
 st.markdown("""
-    <style>
-        /* اتجاه الصفحة والنصوص بالكامل */
-        html, body, [class*="css"], .stApp {
-            direction: rtl;
-            text-align: right;
-        }
-        /* محاذاة القائمة الجانبية */
-        section[data-testid="stSidebar"] {
-            direction: rtl;
-            text-align: right;
-        }
-        /* محاذاة حقول الإدخال والنصوص داخل النموذج */
-        .stTextInput input, .stSelectbox select, .stRadio div {
-            direction: rtl;
-            text-align: right;
-        }
-        /* محاذاة الجداول */
-        .stDataFrame {
-            direction: rtl;
-        }
-        /* محاذاة تنبيهات الأخطاء والنجاح */
-        .element-container, .stAlert {
-            direction: rtl;
-            text-align: right;
-        }
-    </style>
+    
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
@@ -80,7 +54,6 @@ def get_user_ip():
     except:
         return None
 
-# الاتصال بقاعدة البيانات
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
 
@@ -134,6 +107,7 @@ if page == "تسجيل الحضور/الانصراف":
         user_lon = loc['coords']['longitude']
         distance = calculate_distance(BRANCH_LAT, BRANCH_LON, user_lat, user_lon)
         
+        # المطابقة مع الـ IP الجديد
         is_wifi_ok = (user_ip == BRANCH_PUBLIC_IP)
         is_gps_ok = (distance <= MAX_DISTANCE_METERS)
         
@@ -178,11 +152,9 @@ elif page == "لوحة تحكم الإدارة":
             
     st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
-    # تهيئة حالة تسجيل الدخول في session_state
     if "admin_logged_in" not in st.session_state:
         st.session_state["admin_logged_in"] = False
 
-    # نموذج تسجيل الدخول عند عدم توفر الجلسة النشطة
     if not st.session_state["admin_logged_in"]:
         with st.form("login_form"):
             pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
@@ -196,14 +168,12 @@ elif page == "لوحة تحكم الإدارة":
                 else:
                     st.error("كلمة المرور غير صحيحة!")
     else:
-        # زر تسجيل الخروج في أعلى الصفحة
         if st.button("🚪 تسجيل الخروج"):
             st.session_state["admin_logged_in"] = False
             st.rerun()
 
         tab1, tab2 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين بالفرع"])
         
-        # ----------------- التبويب الأول: سجلات الحضور -----------------
         with tab1:
             df_logs = pd.read_sql_query("SELECT * FROM attendance_logs ORDER BY id DESC", conn)
             st.subheader("سجلات الحضور والتسجيلات")
@@ -221,7 +191,6 @@ elif page == "لوحة تحكم الإدارة":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        # ----------------- التبويب الثاني: إدارة الموظفين -----------------
         with tab2:
             st.subheader("إدارة قائمة الموظفين بالفرع")
             
@@ -232,7 +201,6 @@ elif page == "لوحة تحكم الإدارة":
             if "new_job_val" not in st.session_state:
                 st.session_state["new_job_val"] = "موظف"
 
-            # 1. إضافة موظف جديد
             with st.expander("➕ إضافة موظف جديد"):
                 with st.form("add_emp_form"):
                     new_phone = st.text_input("رقم الموبايل (مثال: 01012345671):", value=st.session_state["new_phone_val"], max_chars=11)
@@ -257,11 +225,9 @@ elif page == "لوحة تحكم الإدارة":
                         else:
                             st.warning("يرجى إدخال كافة البيانات المطلوبة.")
             
-            # عرض جدول الموظفين الحاليين
             df_emp_all = pd.read_sql_query("SELECT phone AS 'رقم الموبايل', emp_name AS 'اسم الموظف', job_title AS 'المسمى الوظيفي', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
             st.dataframe(df_emp_all, use_container_width=True)
             
-            # 2. تعديل بيانات موظف
             with st.expander("✏️ تعديل بيانات موظف"):
                 if not df_emp_all.empty:
                     selected_phone = st.selectbox("اختر رقم الموظف المراد تعديله:", df_emp_all['رقم الموبايل'].tolist())
@@ -280,7 +246,6 @@ elif page == "لوحة تحكم الإدارة":
                             st.success("تم تحديث بيانات الموظف بنجاح!")
                             st.rerun()
                             
-            # 3. حذف موظف
             with st.expander("🗑️ حذف موظف"):
                 if not df_emp_all.empty:
                     del_phone = st.selectbox("اختر الموظف المراد حذفه نهائياً:", df_emp_all['رقم الموبايل'].tolist(), key="del_select")
