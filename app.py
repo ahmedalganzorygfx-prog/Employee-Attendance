@@ -11,19 +11,18 @@ from utils import distance_meters, valid_coords, token
 # 1. إعدادات الصفحة
 st.set_page_config(
     page_title="منظومة حضور وانصراف العاملين",
-    page_icon="assets/logo.png",
+    page_icon="logo.png",
     layout="centered",
     initial_sidebar_state="expanded"
 )
 init_db()
 
-# 2. التنسيق البرمجي لمنع أخطاء الـ Syntax ورسومات الصفحة
-css_code = """
+# 2. التنسيق البرمجي: توسيط العناصر، الاتجاه من اليمين لليسار، وبطاقات الدخول
+st.markdown("""
 
-"""
-st.markdown(css_code, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# 3. جلب/إنشاء بصمة الجهاز الفريدة المخزنة في متصفح المحمول (LocalStorage)
+# 3. جلب بصمة الجهاز المخصصة
 device_id = streamlit_js_eval(
     js_expressions="""
     (function() {
@@ -47,8 +46,8 @@ def is_admin():
 if "admin" not in st.session_state:
     st.session_state.admin = False
 
-# 5. الشعار والعناوين
-logo_path = Path(__file__).resolve().parent / "assets" / "logo.png"
+# 5. عرض الشعار والعناوين في المنتصف
+logo_path = Path(__file__).resolve().parent / "logo.png"
 if logo_path.exists():
     st.image(str(logo_path), width=120)
 
@@ -57,7 +56,7 @@ st.subheader(f"{branch_name} – فرع الجيزة")
 st.caption("نظام رقمي لإدارة حضور وانصراف موظفي الفرع")
 st.divider()
 
-# 6. القائمة الجانبية
+# 6. القائمة الجانبية جهة اليمين
 with st.sidebar:
     st.markdown("### ☰ القائمة")
     pages = ["تسجيل الحضور والانصراف", "QR Code"]
@@ -70,7 +69,7 @@ with st.sidebar:
         pages += ["دخول الإدارة"]
     page = st.radio("", pages)
 
-# 7. صفحات النظام
+# 7. محتوى الصفحات
 if page == "تسجيل الحضور والانصراف":
     st.subheader("📍 تسجيل الحضور والانصراف")
     token_from_url = st.query_params.get("site", "")
@@ -93,7 +92,6 @@ if page == "تسجيل الحضور والانصراف":
         if not employee:
             st.error("كود الموظف غير صحيح أو الموظف غير نشط."); st.stop()
 
-        # أ) التحقق من بصمة الهاتف المحمول (Device Identification)
         if not device_id:
             st.error("تعذر التعرف على بصمة الجهاز، يرجى إعادة تحديث الصفحة."); st.stop()
 
@@ -101,7 +99,6 @@ if page == "تسجيل الحضور والانصراف":
         if not device_ok:
             st.error(device_msg); st.stop()
 
-        # ب) التحقق من الموقع الجغرافي (GPS)
         lat = get_setting("branch_latitude", "")
         lon = get_setting("branch_longitude", "")
         radius = float(get_setting("radius_m", "100") or 100)
@@ -225,7 +222,7 @@ elif page == "الموظفون":
             set_employee_active(selected_code, not bool(emp["active"])); st.success("تم تغيير حالة الموظف."); st.rerun()
         if x3.button("🔄 فك ربط الهاتف", use_container_width=True):
             register_employee_device(selected_code, None)
-            st.success("تم فك ربط الهاتف القديم. يمكن للموظف الآن التسجيل من هاتفه الجديد.")
+            st.success("تم فك ربط الهاتف القديم.")
             st.rerun()
         if x4.button("حذف الموظف", use_container_width=True):
             delete_employee(selected_code); st.success("تم حذف الموظف."); st.rerun()
@@ -262,7 +259,7 @@ elif page == "إعدادات الفرع":
     if st.button("إنشاء / تغيير QR", use_container_width=True):
         set_setting("site_token", token()); st.success("تم إنشاء QR جديد."); st.rerun()
 
-# 8. البطاقات الملونة الأربع السفلي
+# 8. البطاقات السفلي والتذييل
 st.divider()
 col1, col2, col3, col4 = st.columns(4)
 with col1:
