@@ -1,8 +1,5 @@
 streamlit
 pandas
-requests
-streamlit-js-eval
-qrcode
 openpyxl
-pillow
-pytz
+qrcode
+streamlit-js-eval
