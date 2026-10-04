@@ -6,6 +6,8 @@ import requests
 from datetime import datetime
 from streamlit_js_eval import get_geolocation
 import os
+import qrcode
+import io
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والبرنامج
@@ -72,7 +74,8 @@ DEFAULT_SETTINGS = {
     "branch_lat": "30.2104",
     "branch_lon": "31.3681",
     "max_distance": "50.0",
-    "disable_wifi_check": "0"  # 0 = مفعل, 1 = معطل
+    "disable_wifi_check": "0",  # 0 = مفعل, 1 = معطل
+    "app_url": "https://employee-attendance.streamlit.app" # رابط التطبيق للـ QR
 }
 
 # تثبيت/تحديث الإعدادات في قاعدة البيانات
@@ -210,7 +213,7 @@ elif page == "لوحة تحكم الإدارة":
             st.rerun()
 
         # تبويبات شاشة الإدارة
-        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙ إعدادات النظام والشبكة"])
+        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙ إعدادات النظام والـ QR"])
         
         # ----------------- التبويب الأول: سجلات الحضور -----------------
         with tab1:
@@ -218,7 +221,6 @@ elif page == "لوحة تحكم الإدارة":
             st.subheader("سجلات الحضور والتسجيلات")
             st.dataframe(df_logs, use_container_width=True)
             
-            import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_logs.to_excel(writer, index=False, sheet_name='Employee_Attendance')
@@ -302,15 +304,16 @@ elif page == "لوحة تحكم الإدارة":
                         st.warning("تم حذف الموظف من قاعدة البيانات!")
                         st.rerun()
 
-        # ----------------- التبويب الثالث: إعدادات النظام والشبكة -----------------
+        # ----------------- التبويب الثالث: إعدادات النظام والـ QR -----------------
         with tab3:
-            st.subheader("⚙️ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
+            st.subheader("⚙️️ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
             st.info("تسمح لك هذه الشاشة بتحديث إحداثيات الفرع والـ IP الخاص براوتر Wi-Fi دون تعديل الكود.")
             
             current_ip = get_setting("branch_ip")
             current_lat = get_setting("branch_lat")
             current_lon = get_setting("branch_lon")
             current_dist = get_setting("max_distance")
+            current_url = get_setting("app_url")
             current_disable = get_setting("disable_wifi_check") == "1"
             
             with st.form("settings_form"):
@@ -323,6 +326,7 @@ elif page == "لوحة تحكم الإدارة":
                     new_lon = st.text_input("خط الطول (Longitude):", value=current_lon)
                     
                 new_dist = st.text_input("أقصى مسافة مسموحة بالـ GPS (بالأمتار):", value=current_dist)
+                new_url = st.text_input("رابط التطبيق الخاص بالـ QR Code:", value=current_url)
                 disable_wifi = st.checkbox("تعطيل فحص الـ Wi-Fi IP مؤقتاً (للتجربة من خارج الفرع)", value=current_disable)
                 
                 save_settings_btn = st.form_submit_button("حفظ الإعدادات الجديدة")
@@ -332,7 +336,38 @@ elif page == "لوحة تحكم الإدارة":
                     set_setting("branch_lat", new_lat.strip())
                     set_setting("branch_lon", new_lon.strip())
                     set_setting("max_distance", new_dist.strip())
+                    set_setting("app_url", new_url.strip())
                     set_setting("disable_wifi_check", "1" if disable_wifi else "0")
                     
-                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتطبيقها على نظام الحضور فوراً!")
+                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتطبيقها فوراً!")
                     st.rerun()
+
+            # ----------------- عرض وتنزيل QR Code الفرع الموحد -----------------
+            st.markdown("---")
+            st.subheader("📱 رمز QR الموحد للفرع (جاهز للطباعة)")
+            
+            # توليد صورة الـ QR Code ديناميكياً
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,
+                box_size=10,
+                border=3
+            )
+            qr.add_data(current_url)
+            qr.make(fit=True)
+            img_qr = qr.make_image(fill_color="#10233F", back_color="white")
+            
+            qr_buf = io.BytesIO()
+            img_qr.save(qr_buf, format="PNG")
+            
+            col_qr1, col_qr2 = st.columns([1, 2])
+            with col_qr1:
+                st.image(qr_buf.getvalue(), caption="رمز QR للفرع", width=220)
+            with col_qr2:
+                st.write("اطبع هذا الرمز الموحد وعلقه بجوار مدخل الفرع أو الراوتر ليكسحه العاملون بواتس/كاميرا الجوال.")
+                st.download_button(
+                    label="📥 تحميل صورة الـ QR للطباعة",
+                    data=qr_buf.getvalue(),
+                    file_name="Branch_Attendance_QR.png",
+                    mime="image/png"
+                )
