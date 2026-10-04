@@ -1,10 +1,23 @@
 [theme]
+# اللون الرئيسي للأزرار، الروابط، والعناصر النشطة (مثال: الكحلي/الداكن)
 primaryColor = "#10233F"
+
+# لون خلفية التطبيق الرئيسية
 backgroundColor = "#FFFFFF"
+
+# لون خلفية القائمة الجانبية (Sidebar) والمربعات التفاعلية
 secondaryBackgroundColor = "#F4F6F9"
+
+# لون النصوص الرئيسية
 textColor = "#10233F"
+
+# نوع الخط المستخدم في الواجهة
 font = "sans serif"
 
-[client]
-pageTitle = "Employee Attendance"
-pageIcon = "🏢"
+[server]
+# إخفاء القائمة العلوية الافتراضية لمنح التطبيق مظهرًا رسميًا
+headless = true
+
+[browser]
+# اسم الأيقونة والعنوان المقتبس من هويتك
+gatherUsageStats = false
