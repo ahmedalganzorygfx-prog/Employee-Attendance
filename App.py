@@ -15,6 +15,7 @@ import io
 PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
 
+# كلمة مرور الإدارة
 ADMIN_PASSWORD = "admin_giza_2026"
 
 # ==========================================
@@ -75,7 +76,7 @@ DEFAULT_SETTINGS = {
     "branch_lon": "31.3681",
     "max_distance": "50.0",
     "disable_wifi_check": "0",  # 0 = مفعل, 1 = معطل
-    "app_url": "https://employee-attendance.streamlit.app" # رابط التطبيق للـ QR
+    "app_url": "https://employee-attendance.streamlit.app"
 }
 
 # تثبيت/تحديث الإعدادات في قاعدة البيانات
@@ -191,7 +192,7 @@ elif page == "لوحة تحكم الإدارة":
             
     st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
-    # إدارة حالة الجلسة وتمرير الدخول
+    # إدارة حالة الجلسة
     if "admin_logged_in" not in st.session_state:
         st.session_state["admin_logged_in"] = False
 
@@ -236,7 +237,6 @@ elif page == "لوحة تحكم الإدارة":
         with tab2:
             st.subheader("إدارة قائمة الموظفين بالفرع")
             
-            # تهيئة session_state لتفريغ حقول الإدخال تلقائياً
             if "new_phone_val" not in st.session_state:
                 st.session_state["new_phone_val"] = ""
             if "new_name_val" not in st.session_state:
@@ -260,7 +260,6 @@ elif page == "لوحة تحكم الإدارة":
                                 conn.commit()
                                 st.success(f"تمت إضافة الموظف {new_name} بنجاح!")
                                 
-                                # تفريغ حقول الإدخال
                                 st.session_state["new_phone_val"] = ""
                                 st.session_state["new_name_val"] = ""
                                 st.session_state["new_job_val"] = "موظف"
@@ -306,7 +305,7 @@ elif page == "لوحة تحكم الإدارة":
 
         # ----------------- التبويب الثالث: إعدادات النظام والـ QR -----------------
         with tab3:
-            st.subheader("⚙️️ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
+            st.subheader("⚙ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
             st.info("تسمح لك هذه الشاشة بتحديث إحداثيات الفرع والـ IP الخاص براوتر Wi-Fi دون تعديل الكود.")
             
             current_ip = get_setting("branch_ip")
@@ -346,7 +345,6 @@ elif page == "لوحة تحكم الإدارة":
             st.markdown("---")
             st.subheader("📱 رمز QR الموحد للفرع (جاهز للطباعة)")
             
-            # توليد صورة الـ QR Code ديناميكياً
             qr = qrcode.QRCode(
                 version=1,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -364,7 +362,7 @@ elif page == "لوحة تحكم الإدارة":
             with col_qr1:
                 st.image(qr_buf.getvalue(), caption="رمز QR للفرع", width=220)
             with col_qr2:
-                st.write("اطبع هذا الرمز الموحد وعلقه بجوار مدخل الفرع أو الراوتر ليكسحه العاملون بواتس/كاميرا الجوال.")
+                st.write("اطبع هذا الرمز الموحد وعلقه بجوار مدخل الفرع أو الراوتر ليمسحه العاملون بالجوال.")
                 st.download_button(
                     label="📥 تحميل صورة الـ QR للطباعة",
                     data=qr_buf.getvalue(),
