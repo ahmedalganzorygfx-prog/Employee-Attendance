@@ -4,6 +4,7 @@ import pandas as pd
 import math
 import requests
 from datetime import datetime
+import pytz
 from streamlit_js_eval import get_geolocation
 import os
 import qrcode
@@ -16,6 +17,12 @@ PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
 
 ADMIN_PASSWORD = "admin_giza_2026"
+
+# ضبط التوقيت المحلي للقاهرة
+EGYPT_TZ = pytz.timezone('Africa/Cairo')
+
+def get_egypt_datetime():
+    return datetime.now(EGYPT_TZ)
 
 # ==========================================
 # 2. تهيئة الواجهة ودعم اتجاه اليمين إلى اليسار (RTL)
@@ -34,7 +41,7 @@ if "nav_page" not in st.session_state:
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"], key="nav_selection")
 
 # ==========================================
-# 3. قواعد البيانات وإدارة الإعدادات المصححة
+# 3. قواعد البيانات وإدارة الإعدادات
 # ==========================================
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
@@ -73,20 +80,18 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# الرابط الفعلي المباشر لتطبيقك
+# الرابط الفعلي والتصحيحات
 REAL_APP_URL = "https://employee-attendance-dv932asxnr57mmovkwpltp.streamlit.app/"
 
-# الإعدادات الافتراضية
 DEFAULT_SETTINGS = {
     "branch_ip": "41.38.200.191",
-    "branch_lat": "30.2104",
-    "branch_lon": "31.3681",
-    "max_distance": "50.0",
+    "branch_lat": "30.0761",
+    "branch_lon": "31.2161",
+    "max_distance": "1000.0",
     "disable_wifi_check": "0",
     "app_url": REAL_APP_URL
 }
 
-# إدخال الإعدادات الافتراضية فقط إذا لم تكن موجودة مسبقاً (INSERT OR IGNORE)
 for key, val in DEFAULT_SETTINGS.items():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, str(val)))
 conn.commit()
@@ -194,8 +199,11 @@ if page == "تسجيل الحضور/الانصراف":
                     code_clean = emp_code_input.strip()
                     if code_clean in active_employees:
                         emp_name = active_employees[code_clean]
-                        today_date = datetime.now().strftime("%Y-%m-%d")
-                        now_time = datetime.now().strftime("%I:%M:%S %p")
+                        
+                        # التوقيت الدقيق لمصر
+                        now_egypt = get_egypt_datetime()
+                        today_date = now_egypt.strftime("%Y-%m-%d")
+                        now_time = now_egypt.strftime("%I:%M:%S %p")
                         
                         cursor.execute('''
                             INSERT INTO attendance_logs (emp_code, emp_name, date, time, action, ip_address, distance_m)
@@ -254,10 +262,11 @@ elif page == "لوحة تحكم الإدارة":
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_logs.to_excel(writer, index=False, sheet_name='Employee_Attendance')
                 
+            now_eg = get_egypt_datetime()
             st.download_button(
                 label="📥 تحميل التقرير الشامل (Excel)",
                 data=buffer.getvalue(),
-                file_name=f"Attendance_Report_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
+                file_name=f"Attendance_Report_{now_eg.strftime('%Y_%m_%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
@@ -336,7 +345,7 @@ elif page == "لوحة تحكم الإدارة":
                         st.warning("تم حذف الموظف من قاعدة البيانات!")
                         st.rerun()
 
-        # ----------------- إعدادات النظام والـ QR المصححة -----------------
+        # ----------------- إعدادات النظام والـ QR -----------------
         with tab3:
             st.subheader("⚙ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
             
@@ -376,7 +385,6 @@ elif page == "لوحة تحكم الإدارة":
             st.markdown("---")
             st.subheader("📱 رمز QR الموحد للفرع (جاهز للطباعة)")
             
-            # جلب الرابط الحالي والمحدث بدقة
             active_qr_url = get_setting("app_url")
             
             qr = qrcode.QRCode(
