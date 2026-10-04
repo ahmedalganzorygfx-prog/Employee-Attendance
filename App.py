@@ -33,7 +33,7 @@ page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/ا
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
 
-# 1. جدول سجلات الحضور
+# 1. جدول سجلات الحضور والانصراف
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attendance_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +47,7 @@ cursor.execute('''
     )
 ''')
 
-# 2. جدول الموظفين
+# 2. جدول بيانات الموظفين بالفرع
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS employees (
         phone TEXT PRIMARY KEY,
@@ -57,7 +57,7 @@ cursor.execute('''
     )
 ''')
 
-# 3. جدول إعدادات النظام (IP والموقع)
+# 3. جدول إعدادات النظام (IP والموقع الجغرافي)
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -75,7 +75,7 @@ DEFAULT_SETTINGS = {
     "disable_wifi_check": "0"  # 0 = مفعل, 1 = معطل
 }
 
-# تحديث/تثبيت الإعدادات في قاعدة البيانات
+# تثبيت/تحديث الإعدادات في قاعدة البيانات
 for key, val in DEFAULT_SETTINGS.items():
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, val))
 conn.commit()
@@ -90,9 +90,10 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية
+# 4. الدوال البرمجية المساعدة
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
+    """حساب المسافة الجغرافية بالأمتار بين نقطتين"""
     R = 6371000.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
@@ -101,6 +102,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 def get_user_ip():
+    """جلب عنوان IP العام لجهاز الموظف"""
     try:
         response = requests.get('https://api.ipify.org?format=json', timeout=4)
         return response.json()['ip']
@@ -108,11 +110,12 @@ def get_user_ip():
         return None
 
 def get_active_employees():
+    """جلب قائمة الموظفين المفعلين فقط"""
     df_emp = pd.read_sql_query("SELECT phone, emp_name FROM employees WHERE is_active = 1", conn)
     return dict(zip(df_emp['phone'], df_emp['emp_name']))
 
 # ==========================================
-# 5. الشاشات الرئيسية
+# 5. الشاشات الرئيسية للتطبيق
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
     if os.path.exists(LOGO_PATH):
@@ -124,7 +127,7 @@ if page == "تسجيل الحضور/الانصراف":
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
     st.info("📲 يرجى الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
     
-    # جلب الإعدادات الحالية من قاعدة البيانات
+    # جلب الإعدادات الحالية الديناميكية من قاعدة البيانات
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
     branch_lon = float(get_setting("branch_lon"))
@@ -140,6 +143,7 @@ if page == "تسجيل الحضور/الانصراف":
         user_lon = loc['coords']['longitude']
         distance = calculate_distance(branch_lat, branch_lon, user_lat, user_lon)
         
+        # المطابقة مع شبكة الواي فاي والموقع الجغرافي
         is_wifi_ok = True if disable_wifi_check else (user_ip == branch_public_ip)
         is_gps_ok = (distance <= max_distance_meters)
         
@@ -184,6 +188,7 @@ elif page == "لوحة تحكم الإدارة":
             
     st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
+    # إدارة حالة الجلسة وتمرير الدخول
     if "admin_logged_in" not in st.session_state:
         st.session_state["admin_logged_in"] = False
 
@@ -204,6 +209,7 @@ elif page == "لوحة تحكم الإدارة":
             st.session_state["admin_logged_in"] = False
             st.rerun()
 
+        # تبويبات شاشة الإدارة
         tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙ إعدادات النظام والشبكة"])
         
         # ----------------- التبويب الأول: سجلات الحضور -----------------
@@ -228,6 +234,7 @@ elif page == "لوحة تحكم الإدارة":
         with tab2:
             st.subheader("إدارة قائمة الموظفين بالفرع")
             
+            # تهيئة session_state لتفريغ حقول الإدخال تلقائياً
             if "new_phone_val" not in st.session_state:
                 st.session_state["new_phone_val"] = ""
             if "new_name_val" not in st.session_state:
@@ -235,6 +242,7 @@ elif page == "لوحة تحكم الإدارة":
             if "new_job_val" not in st.session_state:
                 st.session_state["new_job_val"] = "موظف"
 
+            # 1. إضافة موظف جديد
             with st.expander("➕ إضافة موظف جديد"):
                 with st.form("add_emp_form"):
                     new_phone = st.text_input("رقم الموبايل (مثال: 01012345671):", value=st.session_state["new_phone_val"], max_chars=11)
@@ -250,6 +258,7 @@ elif page == "لوحة تحكم الإدارة":
                                 conn.commit()
                                 st.success(f"تمت إضافة الموظف {new_name} بنجاح!")
                                 
+                                # تفريغ حقول الإدخال
                                 st.session_state["new_phone_val"] = ""
                                 st.session_state["new_name_val"] = ""
                                 st.session_state["new_job_val"] = "موظف"
@@ -259,9 +268,11 @@ elif page == "لوحة تحكم الإدارة":
                         else:
                             st.warning("يرجى إدخال كافة البيانات المطلوبة.")
             
+            # جدول الموظفين الحاليين
             df_emp_all = pd.read_sql_query("SELECT phone AS 'رقم الموبايل', emp_name AS 'اسم الموظف', job_title AS 'المسمى الوظيفي', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
             st.dataframe(df_emp_all, use_container_width=True)
             
+            # 2. تعديل بيانات موظف
             with st.expander("✏️ تعديل بيانات موظف"):
                 if not df_emp_all.empty:
                     selected_phone = st.selectbox("اختر رقم الموظف المراد تعديله:", df_emp_all['رقم الموبايل'].tolist())
@@ -280,6 +291,7 @@ elif page == "لوحة تحكم الإدارة":
                             st.success("تم تحديث بيانات الموظف بنجاح!")
                             st.rerun()
                             
+            # 3. حذف موظف
             with st.expander("🗑️ حذف موظف"):
                 if not df_emp_all.empty:
                     del_phone = st.selectbox("اختر الموظف المراد حذفه نهائياً:", df_emp_all['رقم الموبايل'].tolist(), key="del_select")
