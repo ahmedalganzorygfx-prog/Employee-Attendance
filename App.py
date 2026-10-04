@@ -8,20 +8,11 @@ from streamlit_js_eval import get_geolocation
 import os
 
 # ==========================================
-# 1. الإعدادات العامة للعنوان والشعار
+# 1. الإعدادات العامة للشعار والبرنامج
 # ==========================================
 PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
 
-# إحداثيات موقع الفرع (قم بتحديثها طبقاً لموقعك الفعلي)
-BRANCH_LAT = 30.0444
-BRANCH_LON = 31.2357
-MAX_DISTANCE_METERS = 50.0
-
-# الـ Public IP المحدث لشبكة Wi-Fi الفرع
-BRANCH_PUBLIC_IP = "34.190.100.134"
-
-# كلمة مرور الإدارة
 ADMIN_PASSWORD = "admin_giza_2026"
 
 # ==========================================
@@ -30,14 +21,95 @@ ADMIN_PASSWORD = "admin_giza_2026"
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
 st.markdown("""
-    
+    <style>
+        html, body, [class*="css"], .stApp {
+            direction: rtl;
+            text-align: right;
+        }
+        section[data-testid="stSidebar"] {
+            direction: rtl;
+            text-align: right;
+        }
+        .stTextInput input, .stSelectbox select, .stRadio div {
+            direction: rtl;
+            text-align: right;
+        }
+        .stDataFrame {
+            direction: rtl;
+        }
+        .element-container, .stAlert {
+            direction: rtl;
+            text-align: right;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"])
 
 # ==========================================
-# 3. الدوال البرمجية وقواعد البيانات
+# 3. قواعد البيانات وإدارة الإعدادات
+# ==========================================
+conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
+cursor = conn.cursor()
+
+# 1. جدول سجلات الحضور
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS attendance_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone TEXT,
+        emp_name TEXT,
+        date TEXT,
+        time TEXT,
+        action TEXT,
+        ip_address TEXT,
+        distance_m REAL
+    )
+''')
+
+# 2. جدول الموظفين
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS employees (
+        phone TEXT PRIMARY KEY,
+        emp_name TEXT NOT NULL,
+        job_title TEXT DEFAULT 'موظف',
+        is_active INTEGER DEFAULT 1
+    )
+''')
+
+# 3. جدول إعدادات النظام (IP والموقع)
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+''')
+conn.commit()
+
+# الإعدادات الافتراضية الأولية
+DEFAULT_SETTINGS = {
+    "branch_ip": "34.190.100.134",
+    "branch_lat": "30.0444",
+    "branch_lon": "31.2357",
+    "max_distance": "50.0",
+    "disable_wifi_check": "0" # 0 = مفعل, 1 = معطل
+}
+
+for key, val in DEFAULT_SETTINGS.items():
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val))
+conn.commit()
+
+def get_setting(key):
+    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
+    res = cursor.fetchone()
+    return res[0] if res else DEFAULT_SETTINGS.get(key, "")
+
+def set_setting(key, value):
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+
+# ==========================================
+# 4. الدوال البرمجية
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -54,38 +126,12 @@ def get_user_ip():
     except:
         return None
 
-conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS attendance_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        phone TEXT,
-        emp_name TEXT,
-        date TEXT,
-        time TEXT,
-        action TEXT,
-        ip_address TEXT,
-        distance_m REAL
-    )
-''')
-
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS employees (
-        phone TEXT PRIMARY KEY,
-        emp_name TEXT NOT NULL,
-        job_title TEXT DEFAULT 'موظف',
-        is_active INTEGER DEFAULT 1
-    )
-''')
-conn.commit()
-
 def get_active_employees():
     df_emp = pd.read_sql_query("SELECT phone, emp_name FROM employees WHERE is_active = 1", conn)
     return dict(zip(df_emp['phone'], df_emp['emp_name']))
 
 # ==========================================
-# 4. الشاشات الرئيسية
+# 5. الشاشات الرئيسية
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
     if os.path.exists(LOGO_PATH):
@@ -97,24 +143,29 @@ if page == "تسجيل الحضور/الانصراف":
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
     st.info("📲 يرجى الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
     
+    # جلب الإعدادات الحالية من قاعدة البيانات
+    branch_public_ip = get_setting("branch_ip")
+    branch_lat = float(get_setting("branch_lat"))
+    branch_lon = float(get_setting("branch_lon"))
+    max_distance_meters = float(get_setting("max_distance"))
+    disable_wifi_check = get_setting("disable_wifi_check") == "1"
+    
     user_ip = get_user_ip()
     loc = get_geolocation()
-    
     active_employees = get_active_employees()
     
     if loc and 'coords' in loc and user_ip:
         user_lat = loc['coords']['latitude']
         user_lon = loc['coords']['longitude']
-        distance = calculate_distance(BRANCH_LAT, BRANCH_LON, user_lat, user_lon)
+        distance = calculate_distance(branch_lat, branch_lon, user_lat, user_lon)
         
-        # المطابقة مع الـ IP الجديد
-        is_wifi_ok = (user_ip == BRANCH_PUBLIC_IP)
-        is_gps_ok = (distance <= MAX_DISTANCE_METERS)
+        is_wifi_ok = True if disable_wifi_check else (user_ip == branch_public_ip)
+        is_gps_ok = (distance <= max_distance_meters)
         
         if not is_wifi_ok:
             st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (عنوان IP الحالي: {user_ip})")
         elif not is_gps_ok:
-            st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(MAX_DISTANCE_METERS)}m")
+            st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(max_distance_meters)}m")
         else:
             st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
             
@@ -172,8 +223,10 @@ elif page == "لوحة تحكم الإدارة":
             st.session_state["admin_logged_in"] = False
             st.rerun()
 
-        tab1, tab2 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين بالفرع"])
+        # 3 تبويبات شاملة
+        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين", "⚙️️ إعدادات النظام والشبكة"])
         
+        # ----------------- التبويب الأول: سجلات الحضور -----------------
         with tab1:
             df_logs = pd.read_sql_query("SELECT * FROM attendance_logs ORDER BY id DESC", conn)
             st.subheader("سجلات الحضور والتسجيلات")
@@ -191,6 +244,7 @@ elif page == "لوحة تحكم الإدارة":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
+        # ----------------- التبويب الثاني: إدارة الموظفين -----------------
         with tab2:
             st.subheader("إدارة قائمة الموظفين بالفرع")
             
@@ -255,3 +309,38 @@ elif page == "لوحة تحكم الإدارة":
                         conn.commit()
                         st.warning("تم حذف الموظف من قاعدة البيانات!")
                         st.rerun()
+
+        # ----------------- التبويب الثالث: إعدادات النظام والشبكة -----------------
+        with tab3:
+            st.subheader("⚙️ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
+            st.info("تسمح لك هذه الشاشة بتحديث إحداثيات الفرع والـ IP الخاص براوتر Wi-Fi دون تعديل الكود.")
+            
+            current_ip = get_setting("branch_ip")
+            current_lat = get_setting("branch_lat")
+            current_lon = get_setting("branch_lon")
+            current_dist = get_setting("max_distance")
+            current_disable = get_setting("disable_wifi_check") == "1"
+            
+            with st.form("settings_form"):
+                new_ip = st.text_input("عنوان IP العام لراوتر Wi-Fi الفرع:", value=current_ip)
+                
+                col_lat, col_lon = st.columns(2)
+                with col_lat:
+                    new_lat = st.text_input("خط العرض (Latitude):", value=current_lat)
+                with col_lon:
+                    new_lon = st.text_input("خط الطول (Longitude):", value=current_lon)
+                    
+                new_dist = st.text_input("أقصى مسافة مسموحة بالـ GPS (بالأمتار):", value=current_dist)
+                disable_wifi = st.checkbox("تعطيل فحص الـ Wi-Fi IP مؤقتاً (للتجربة من خارج الفرع)", value=current_disable)
+                
+                save_settings_btn = st.form_submit_button("حفظ الإعدادات الجديدة")
+                
+                if save_settings_btn:
+                    set_setting("branch_ip", new_ip.strip())
+                    set_setting("branch_lat", new_lat.strip())
+                    set_setting("branch_lon", new_lon.strip())
+                    set_setting("max_distance", new_dist.strip())
+                    set_setting("disable_wifi_check", "1" if disable_wifi else "0")
+                    
+                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتطبيقها على نظام الحضور فوراً!")
+                    st.rerun()
