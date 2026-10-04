@@ -1,413 +1,277 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
-import math
-import requests
-from datetime import datetime
-import pytz
-from streamlit_js_eval import get_geolocation
-import os
-import qrcode
 import io
+from datetime import date
+import pandas as pd
+import streamlit as st
+from pathlib import Path
+from streamlit_js_eval import streamlit_js_eval
 
-# ==========================================
-# 1. الإعدادات العامة للشعار والبرنامج
-# ==========================================
-PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
-LOGO_PATH = "logo.png"
+from database import *
+from utils import distance_meters, valid_coords, token
 
-ADMIN_PASSWORD = "admin_giza_2026"
+# 1. إعدادات الصفحة
+st.set_page_config(
+    page_title="منظومة حضور وانصراف العاملين",
+    page_icon="assets/logo.png",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
+init_db()
 
-# ضبط التوقيت المحلي للقاهرة
-EGYPT_TZ = pytz.timezone('Africa/Cairo')
+# 2. التنسيق البرمجي لمنع أخطاء الـ Syntax ورسومات الصفحة
+css_code = """
 
-def get_egypt_datetime():
-    return datetime.now(EGYPT_TZ)
+"""
+st.markdown(css_code, unsafe_allow_html=True)
 
-# ==========================================
-# 2. تهيئة الواجهة ودعم اتجاه اليمين إلى اليسار (RTL)
-# ==========================================
-st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
+# 3. جلب/إنشاء بصمة الجهاز الفريدة المخزنة في متصفح المحمول (LocalStorage)
+device_id = streamlit_js_eval(
+    js_expressions="""
+    (function() {
+        let id = localStorage.getItem('emp_device_id');
+        if (!id) {
+            id = 'DEV-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('emp_device_id', id);
+        }
+        return id;
+    })()
+    """,
+    key="get_device_id"
+)
 
-st.markdown("""
-    
-""", unsafe_allow_html=True)
+# 4. إدارة الجلسة
+branch_name = get_setting("branch_name", "الأكاديمية المهنية للمعلمين")
 
-st.sidebar.title(PROJECT_NAME)
+def is_admin():
+    return st.session_state.get("admin", False)
 
-if "nav_page" not in st.session_state:
-    st.session_state["nav_page"] = "تسجيل الحضور/الانصراف"
+if "admin" not in st.session_state:
+    st.session_state.admin = False
 
-page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"], key="nav_selection")
+# 5. الشعار والعناوين
+logo_path = Path(__file__).resolve().parent / "assets" / "logo.png"
+if logo_path.exists():
+    st.image(str(logo_path), width=120)
 
-# ==========================================
-# 3. قواعد البيانات وإدارة الإعدادات
-# ==========================================
-conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
-cursor = conn.cursor()
+st.title("منظومة حضور وانصراف العاملين")
+st.subheader(f"{branch_name} – فرع الجيزة")
+st.caption("نظام رقمي لإدارة حضور وانصراف موظفي الفرع")
+st.divider()
 
-# 1. جدول سجلات الحضور والانصراف
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS attendance_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        emp_code TEXT,
-        emp_name TEXT,
-        date TEXT,
-        time TEXT,
-        action TEXT,
-        ip_address TEXT,
-        distance_m REAL
-    )
-''')
-
-# 2. جدول بيانات الموظفين
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS employees (
-        emp_code TEXT PRIMARY KEY,
-        emp_name TEXT NOT NULL,
-        phone TEXT,
-        job_title TEXT DEFAULT 'موظف',
-        is_active INTEGER DEFAULT 1
-    )
-''')
-
-# 3. جدول إعدادات النظام
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-''')
-conn.commit()
-
-# الرابط الفعلي والتصحيحات
-REAL_APP_URL = "https://employee-attendance-dv932asxnr57mmovkwpltp.streamlit.app/"
-
-DEFAULT_SETTINGS = {
-    "branch_ip": "41.38.200.191",
-    "branch_lat": "30.0761",
-    "branch_lon": "31.2161",
-    "max_distance": "1000.0",
-    "disable_wifi_check": "0",
-    "app_url": REAL_APP_URL
-}
-
-for key, val in DEFAULT_SETTINGS.items():
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, str(val)))
-conn.commit()
-
-def get_setting(key):
-    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
-    res = cursor.fetchone()
-    if res and res[0]:
-        return res[0]
-    return DEFAULT_SETTINGS.get(key, "")
-
-def set_setting(key, value):
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
-    conn.commit()
-
-# ==========================================
-# 4. الدوال البرمجية المساعدة
-# ==========================================
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-    a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-def get_user_ip():
-    try:
-        response = requests.get('https://api.ipify.org?format=json', timeout=4)
-        return response.json()['ip']
-    except:
-        return None
-
-def get_active_employees_by_code():
-    try:
-        df_emp = pd.read_sql_query("SELECT emp_code, emp_name FROM employees WHERE is_active = 1", conn)
-        return dict(zip(df_emp['emp_code'], df_emp['emp_name']))
-    except Exception:
-        cursor.execute("DROP TABLE IF EXISTS employees")
-        cursor.execute('''
-            CREATE TABLE employees (
-                emp_code TEXT PRIMARY KEY,
-                emp_name TEXT NOT NULL,
-                phone TEXT,
-                job_title TEXT DEFAULT 'موظف',
-                is_active INTEGER DEFAULT 1
-            )
-        ''')
-        sample_employees = [
-            ('101', 'أحمد حسني', '01012345671', 'مدير الفرع'),
-            ('102', 'محمد علي', '01012345672', 'موظف'),
-            ('103', 'محمود إبراهيم', '01012345673', 'موظف')
-        ]
-        cursor.executemany("INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, 1)", sample_employees)
-        conn.commit()
-        
-        df_emp = pd.read_sql_query("SELECT emp_code, emp_name FROM employees WHERE is_active = 1", conn)
-        return dict(zip(df_emp['emp_code'], df_emp['emp_name']))
-
-# ==========================================
-# 5. الشاشات الرئيسية للتطبيق
-# ==========================================
-if page == "تسجيل الحضور/الانصراف":
-    if os.path.exists(LOGO_PATH):
-        col1, col2, col3 = st.columns([1, 3, 1])
-        with col2:
-            st.image(LOGO_PATH, width=280)
-            
-    st.title(PROJECT_NAME)
-    st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📲 ادخل كودك الخاص بشرط الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
-    
-    branch_public_ip = get_setting("branch_ip")
-    branch_lat = float(get_setting("branch_lat"))
-    branch_lon = float(get_setting("branch_lon"))
-    max_distance_meters = float(get_setting("max_distance"))
-    disable_wifi_check = get_setting("disable_wifi_check") == "1"
-    
-    user_ip = get_user_ip()
-    loc = get_geolocation()
-    active_employees = get_active_employees_by_code()
-    
-    if loc and 'coords' in loc and user_ip:
-        user_lat = loc['coords']['latitude']
-        user_lon = loc['coords']['longitude']
-        distance = calculate_distance(branch_lat, branch_lon, user_lat, user_lon)
-        
-        is_wifi_ok = True if disable_wifi_check else (user_ip == branch_public_ip)
-        is_gps_ok = (distance <= max_distance_meters)
-        
-        if not is_wifi_ok:
-            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (عنوان IP الحالي: {user_ip})")
-        elif not is_gps_ok:
-            st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(max_distance_meters)}m")
-        else:
-            st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
-            
-            with st.form("attendance_form"):
-                emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
-                action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
-                
-                submit_btn = st.form_submit_button("تأكيد التوقيع")
-                
-                if submit_btn:
-                    code_clean = emp_code_input.strip()
-                    if code_clean in active_employees:
-                        emp_name = active_employees[code_clean]
-                        
-                        # التوقيت الدقيق لمصر
-                        now_egypt = get_egypt_datetime()
-                        today_date = now_egypt.strftime("%Y-%m-%d")
-                        now_time = now_egypt.strftime("%I:%M:%S %p")
-                        
-                        cursor.execute('''
-                            INSERT INTO attendance_logs (emp_code, emp_name, date, time, action, ip_address, distance_m)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''', (code_clean, emp_name, today_date, now_time, action_type, user_ip, distance))
-                        conn.commit()
-                        
-                        st.balloons()
-                        st.success(f"تم {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
-                    else:
-                        st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
-    else:
-        st.warning("⏳ جاري جلب الموقع والشبكة... يرجى السماح بالوصول للـ GPS.")
-
-elif page == "لوحة تحكم الإدارة":
-    if os.path.exists(LOGO_PATH):
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image(LOGO_PATH, width=200)
-            
-    st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
-    
-    if "admin_logged_in" not in st.session_state:
-        st.session_state["admin_logged_in"] = False
-
-    if not st.session_state["admin_logged_in"]:
-        with st.form("login_form"):
-            pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
-            login_btn = st.form_submit_button("دخول")
-            
-            if login_btn:
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state["admin_logged_in"] = True
-                    st.success("تم تسجيل الدخول بنجاح.")
-                    st.rerun()
-                else:
-                    st.error("كلمة المرور غير صحيحة!")
-    else:
-        if st.button("🚪 تسجيل الخروج"):
-            st.session_state["admin_logged_in"] = False
+# 6. القائمة الجانبية
+with st.sidebar:
+    st.markdown("### ☰ القائمة")
+    pages = ["تسجيل الحضور والانصراف", "QR Code"]
+    if is_admin():
+        pages += ["لوحة الإدارة", "الموظفون", "التقارير", "إعدادات الفرع"]
+        if st.button("تسجيل خروج الإدارة", use_container_width=True):
+            st.session_state.admin = False
             st.rerun()
+    else:
+        pages += ["دخول الإدارة"]
+    page = st.radio("", pages)
 
-        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين والأكواد", "⚙ إعدادات النظام والـ QR"])
+# 7. صفحات النظام
+if page == "تسجيل الحضور والانصراف":
+    st.subheader("📍 تسجيل الحضور والانصراف")
+    token_from_url = st.query_params.get("site", "")
+    configured_token = get_setting("site_token", "")
+    if not token_from_url:
+        st.warning("يجب فتح هذه الصفحة من خلال QR Code الخاص بالفرع.")
+    elif not configured_token or token_from_url != configured_token:
+        st.error("رمز QR غير صالح.")
+        st.stop()
+
+    action = st.radio("العملية", ["حضور", "انصراف"], horizontal=True)
+    code = st.text_input("كود الموظف", placeholder="أدخل اسم المستخدم / الكود")
+    
+    if st.button("📍 التحقق من الموقع وتسجيل العملية", type="primary", use_container_width=True):
+        code = normalize_code(code)
+        if not code:
+            st.error("أدخل كود الموظف."); st.stop()
+            
+        employee = get_employee(code, active_only=True)
+        if not employee:
+            st.error("كود الموظف غير صحيح أو الموظف غير نشط."); st.stop()
+
+        # أ) التحقق من بصمة الهاتف المحمول (Device Identification)
+        if not device_id:
+            st.error("تعذر التعرف على بصمة الجهاز، يرجى إعادة تحديث الصفحة."); st.stop()
+
+        device_ok, device_msg = verify_employee_device(code, device_id)
+        if not device_ok:
+            st.error(device_msg); st.stop()
+
+        # ب) التحقق من الموقع الجغرافي (GPS)
+        lat = get_setting("branch_latitude", "")
+        lon = get_setting("branch_longitude", "")
+        radius = float(get_setting("radius_m", "100") or 100)
+        if not valid_coords(lat, lon):
+            st.error("لم يتم ضبط إحداثيات الفرع بعد. ادخل إلى إعدادات الفرع من الإدارة."); st.stop()
+
+        try:
+            from streamlit_js_eval import get_geolocation
+            loc = get_geolocation(component_key="attendance_location")
+        except Exception as e:
+            st.error(f"تعذر تشغيل GPS: {e}"); st.stop()
+        if not loc:
+            st.info("اسمح للمتصفح باستخدام الموقع ثم اضغط الزر مرة أخرى."); st.stop()
+        if "error" in loc:
+            st.error(loc["error"].get("message", "تعذر الحصول على الموقع.")); st.stop()
+            
+        coords = loc.get("coords", {})
+        user_lat, user_lon = coords.get("latitude"), coords.get("longitude")
+        accuracy = coords.get("accuracy")
+        if user_lat is None or user_lon is None:
+            st.error("بيانات الموقع غير مكتملة."); st.stop()
+
+        dist = distance_meters(float(user_lat), float(user_lon), float(lat), float(lon))
+        st.info(f"المسافة عن الفرع: {dist:.1f} متر")
+        if dist > radius:
+            st.error(f"لم يتم التسجيل: الجهاز خارج نطاق الفرع المحدد ({radius:.0f} متر)."); st.stop()
+
+        today = today_records(code)
+        if action == "حضور" and any(x["action"] == "حضور" for x in today):
+            st.warning("تم تسجيل حضور هذا الموظف اليوم بالفعل."); st.stop()
+        if action == "انصراف":
+            if not any(x["action"] == "حضور" for x in today):
+                st.warning("لا يمكن تسجيل الانصراف قبل تسجيل الحضور."); st.stop()
+            if any(x["action"] == "انصراف" for x in today):
+                st.warning("تم تسجيل الانصراف لهذا الموظف اليوم بالفعل."); st.stop()
+
+        record_attendance(employee, action, user_lat, user_lon, dist, accuracy)
+        st.success(f"تم تسجيل {action} بنجاح للموظف: {employee['name']}")
+
+    if code:
+        rows = today_records(code)
+        if rows:
+            st.markdown("### سجل اليوم")
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+elif page == "دخول الإدارة":
+    st.subheader("🔑 تسجيل الدخول للإدارة")
+    password = st.text_input("كلمة المرور", type="password", placeholder="أدخل كلمة مرور الإدارة")
+    if st.button("دخول ➔", use_container_width=True):
+        if password == get_setting("admin_password", "123456"):
+            st.session_state.admin = True
+            st.rerun()
+        else:
+            st.error("كلمة المرور غير صحيحة.")
+
+elif page == "QR Code":
+    st.subheader("🔳 QR Code الخاص بالفرع")
+    site_token = get_setting("site_token", "")
+    if not site_token:
+        st.info("يجب على الإدارة إنشاء QR أولًا من إعدادات الفرع.")
+    else:
+        try:
+            import qrcode
+            base = st.context.url.split("?")[0]
+            url = f"{base}?site={site_token}&action=حضور"
+            img = qrcode.make(url)
+            buf = io.BytesIO(); img.save(buf, format="PNG")
+            data = buf.getvalue()
+            st.image(data, width=280)
+            st.download_button("📥 تحميل QR", data, "giza_attendance_qr.png", "image/png", use_container_width=True)
+        except Exception as e:
+            st.error(f"تعذر إنشاء QR: {e}")
+
+elif page == "لوحة الإدارة":
+    st.subheader("📊 لوحة الإدارة")
+    s = stats_today()
+    a, b, c, d = st.columns(4)
+    a.metric("إجمالي الموظفين", s["total"])
+    b.metric("الموظفون النشطون", s["active"])
+    c.metric("حضور اليوم", s["present"])
+    d.metric("انصراف اليوم", s["departed"])
+
+elif page == "الموظفون":
+    st.subheader("👥 إدارة الموظفين")
+    with st.expander("➕ إضافة موظف جديد", expanded=True):
+        with st.form("add_employee"):
+            c1, c2 = st.columns(2)
+            code = c1.text_input("كود الموظف *", placeholder="001")
+            name = c2.text_input("اسم الموظف *")
+            job = c1.text_input("الوظيفة")
+            phone = c2.text_input("الهاتف")
+            submit = st.form_submit_button("💾 إضافة الموظف", type="primary", use_container_width=True)
+        if submit:
+            ok, msg = add_employee(code, name, job, phone)
+            if ok: st.success(msg); st.rerun()
+            else: st.error(msg)
+
+    employees = list_employees()
+    if employees:
+        df = pd.DataFrame(employees)
+        df["الحالة"] = df["active"].map({1: "نشط", 0: "غير نشط"})
+        df["ربط الهاتف"] = df["device_id"].apply(lambda x: "مسجل" if x else "غير مسجل")
+        st.dataframe(df[["employee_code", "name", "job_title", "phone", "الحالة", "ربط الهاتف"]].rename(columns={"employee_code": "كود الموظف", "name": "اسم الموظف", "job_title": "الوظيفة", "phone": "الهاتف"}), use_container_width=True, hide_index=True)
+
+        st.markdown("### ✏️ تعديل / تفعيل / فك ربط الهاتف / حذف")
+        selected = st.selectbox("اختر الموظف", [f"{e['employee_code']} — {e['name']}" for e in employees])
+        selected_code = selected.split(" — ", 1)[0]
+        emp = get_employee(selected_code) or get_employee(selected_code, active_only=False)
+        c1, c2 = st.columns(2)
+        with c1:
+            new_name = st.text_input("الاسم", value=emp["name"], key="edit_name")
+            new_job = st.text_input("الوظيفة", value=emp["job_title"], key="edit_job")
+        with c2:
+            new_phone = st.text_input("الهاتف", value=emp["phone"], key="edit_phone")
+            st.write(f"الكود: **{emp['employee_code']}**")
         
-        # ----------------- سجلات الحضور -----------------
-        with tab1:
-            try:
-                df_logs = pd.read_sql_query("SELECT id, emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', date AS 'التاريخ', time AS 'الوقت', action AS 'الحركة', ip_address AS 'عنوان IP', distance_m AS 'المسافة (متر)' FROM attendance_logs ORDER BY id DESC", conn)
-            except Exception:
-                df_logs = pd.DataFrame()
-                
-            st.subheader("سجلات الحضور والتسجيلات")
-            st.dataframe(df_logs, use_container_width=True)
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_logs.to_excel(writer, index=False, sheet_name='Employee_Attendance')
-                
-            now_eg = get_egypt_datetime()
-            st.download_button(
-                label="📥 تحميل التقرير الشامل (Excel)",
-                data=buffer.getvalue(),
-                file_name=f"Attendance_Report_{now_eg.strftime('%Y_%m_%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-        # ----------------- إدارة الموظفين والأكواد -----------------
-        with tab2:
-            st.subheader("إدارة الموظفين وأكواد التوقيع")
-            
-            if "new_code_val" not in st.session_state:
-                st.session_state["new_code_val"] = ""
-            if "new_name_val" not in st.session_state:
-                st.session_state["new_name_val"] = ""
-            if "new_phone_val" not in st.session_state:
-                st.session_state["new_phone_val"] = ""
-            if "new_job_val" not in st.session_state:
-                st.session_state["new_job_val"] = "موظف"
+        x1, x2, x3, x4 = st.columns(4)
+        if x1.button("حفظ التعديل", use_container_width=True):
+            if update_employee(selected_code, new_name, new_job, new_phone): st.success("تم الحفظ."); st.rerun()
+        if x2.button("تفعيل/تعطيل", use_container_width=True):
+            set_employee_active(selected_code, not bool(emp["active"])); st.success("تم تغيير حالة الموظف."); st.rerun()
+        if x3.button("🔄 فك ربط الهاتف", use_container_width=True):
+            register_employee_device(selected_code, None)
+            st.success("تم فك ربط الهاتف القديم. يمكن للموظف الآن التسجيل من هاتفه الجديد.")
+            st.rerun()
+        if x4.button("حذف الموظف", use_container_width=True):
+            delete_employee(selected_code); st.success("تم حذف الموظف."); st.rerun()
 
-            with st.expander("➕ إضافة موظف جديد وكود توقيع"):
-                with st.form("add_emp_form"):
-                    new_code = st.text_input("كود الموظف (مثال: 101):", value=st.session_state["new_code_val"])
-                    new_name = st.text_input("اسم الموظف الثلاثي:", value=st.session_state["new_name_val"])
-                    new_phone = st.text_input("رقم الموبايل (اختياري):", value=st.session_state["new_phone_val"], max_chars=11)
-                    new_job = st.text_input("المسمى الوظيفي:", value=st.session_state["new_job_val"])
-                    
-                    add_btn = st.form_submit_button("حفظ الموظف والكود")
-                    if add_btn:
-                        if new_code.strip() and new_name.strip():
-                            try:
-                                cursor.execute("INSERT INTO employees (emp_code, emp_name, phone, job_title) VALUES (?, ?, ?, ?)",
-                                               (new_code.strip(), new_name.strip(), new_phone.strip(), new_job.strip()))
-                                conn.commit()
-                                st.success(f"تمت إضافة الموظف {new_name} بالكود ({new_code}) بنجاح!")
-                                
-                                st.session_state["new_code_val"] = ""
-                                st.session_state["new_name_val"] = ""
-                                st.session_state["new_phone_val"] = ""
-                                st.session_state["new_job_val"] = "موظف"
-                                st.rerun()
-                            except sqlite3.IntegrityError:
-                                st.error("كود الموظف هذا مستخدم بالفعل لموظف آخر!")
-                        else:
-                            st.warning("يرجى إدخال كود الموظف والاسم الثلاثي.")
-            
-            try:
-                df_emp_all = pd.read_sql_query("SELECT emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', phone AS 'رقم الموبايل', job_title AS 'المسمى الوظيفي', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
-            except Exception:
-                df_emp_all = pd.DataFrame()
-                
-            st.dataframe(df_emp_all, use_container_width=True)
-            
-            with st.expander("✏️ تعديل بيانات وكود موظف"):
-                if not df_emp_all.empty:
-                    selected_code = st.selectbox("اختر كود الموظف المراد تعديله:", df_emp_all['كود الموظف'].tolist())
-                    emp_data = df_emp_all[df_emp_all['كود الموظف'] == selected_code].iloc[0]
-                    
-                    with st.form("edit_emp_form"):
-                        edit_name = st.text_input("تحديث الاسم:", value=emp_data['اسم الموظف'])
-                        edit_phone = st.text_input("تحديث الموبايل:", value=emp_data['رقم الموبايل'])
-                        edit_job = st.text_input("تحديث المسمى الوظيفي:", value=emp_data['المسمى الوظيفي'])
-                        edit_active = st.checkbox("حالة التفعيل (مسموح له بالتسجيل)", value=bool(emp_data['الحالة (1=مفعل)']))
-                        
-                        update_btn = st.form_submit_button("تحديث البيانات")
-                        if update_btn:
-                            cursor.execute("UPDATE employees SET emp_name=?, phone=?, job_title=?, is_active=? WHERE emp_code=?",
-                                           (edit_name.strip(), edit_phone.strip(), edit_job.strip(), 1 if edit_active else 0, selected_code))
-                            conn.commit()
-                            st.success("تم تحديث بيانات الموظف بنجاح!")
-                            st.rerun()
-                            
-            with st.expander("🗑️ حذف موظف"):
-                if not df_emp_all.empty:
-                    del_code = st.selectbox("اختر كود الموظف المراد حذفه نهائياً:", df_emp_all['كود الموظف'].tolist(), key="del_select")
-                    
-                    if st.button("حذف الموظف الآن", type="primary"):
-                        cursor.execute("DELETE FROM employees WHERE emp_code=?", (del_code,))
-                        conn.commit()
-                        st.warning("تم حذف الموظف من قاعدة البيانات!")
-                        st.rerun()
+elif page == "التقارير":
+    st.subheader("📑 التقارير")
+    c1, c2 = st.columns(2)
+    start = c1.date_input("من", value=date.today())
+    end = c2.date_input("إلى", value=date.today())
+    code_filter = st.text_input("كود موظف (اختياري)")
+    rows = attendance_report(start, end, code_filter or None)
+    if not rows: st.info("لا توجد بيانات للفترة المحددة.")
+    else:
+        df = pd.DataFrame(rows); st.dataframe(df, use_container_width=True, hide_index=True)
+        x = io.BytesIO()
+        with pd.ExcelWriter(x, engine="openpyxl") as writer: df.to_excel(writer, index=False, sheet_name="الحضور والانصراف")
+        st.download_button("📥 تنزيل Excel", x.getvalue(), "attendance_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-        # ----------------- إعدادات النظام والـ QR -----------------
-        with tab3:
-            st.subheader("⚙ تعديل إعدادات الـ IP والموقع الجغرافي (GPS)")
-            
-            current_ip = get_setting("branch_ip")
-            current_lat = get_setting("branch_lat")
-            current_lon = get_setting("branch_lon")
-            current_dist = get_setting("max_distance")
-            current_url = get_setting("app_url")
-            current_disable = get_setting("disable_wifi_check") == "1"
-            
-            with st.form("settings_form"):
-                new_ip = st.text_input("عنوان IP العام لراوتر Wi-Fi الفرع:", value=current_ip)
-                
-                col_lat, col_lon = st.columns(2)
-                with col_lat:
-                    new_lat = st.text_input("خط العرض (Latitude):", value=current_lat)
-                with col_lon:
-                    new_lon = st.text_input("خط الطول (Longitude):", value=current_lon)
-                    
-                new_dist = st.text_input("أقصى مسافة مسموحة بالـ GPS (بالأمتار):", value=current_dist)
-                new_url = st.text_input("رابط التطبيق الخاص بالـ QR Code:", value=current_url)
-                disable_wifi = st.checkbox("تعطيل فحص الـ Wi-Fi IP مؤقتاً (للتجربة من خارج الفرع)", value=current_disable)
-                
-                save_settings_btn = st.form_submit_button("حفظ الإعدادات الجديدة")
-                
-                if save_settings_btn:
-                    set_setting("branch_ip", new_ip.strip())
-                    set_setting("branch_lat", new_lat.strip())
-                    set_setting("branch_lon", new_lon.strip())
-                    set_setting("max_distance", new_dist.strip())
-                    set_setting("app_url", new_url.strip())
-                    set_setting("disable_wifi_check", "1" if disable_wifi else "0")
-                    
-                    st.success("✅ تم حفظ الإعدادات الجديدة بنجاح وتحديث الـ QR Code!")
-                    st.rerun()
+elif page == "إعدادات الفرع":
+    st.subheader("⚙️ إعدادات الفرع")
+    name = st.text_input("اسم الفرع", value=get_setting("branch_name"))
+    lat = st.text_input("خط العرض", value=get_setting("branch_latitude"))
+    lon = st.text_input("خط الطول", value=get_setting("branch_longitude"))
+    radius = st.number_input("نطاق الحضور بالمتر", 10, 1000, int(float(get_setting("radius_m", "100") or 100)))
+    new_password = st.text_input("كلمة مرور الإدارة الجديدة", type="password")
+    if st.button("💾 حفظ الإعدادات", type="primary", use_container_width=True):
+        if not valid_coords(lat, lon): st.error("أدخل إحداثيات صحيحة.")
+        else:
+            set_setting("branch_name", name); set_setting("branch_latitude", lat); set_setting("branch_longitude", lon); set_setting("radius_m", radius)
+            if new_password: set_setting("admin_password", new_password)
+            st.success("تم حفظ الإعدادات."); st.rerun()
+    st.divider()
+    st.subheader("🔑 QR Code")
+    if st.button("إنشاء / تغيير QR", use_container_width=True):
+        set_setting("site_token", token()); st.success("تم إنشاء QR جديد."); st.rerun()
 
-            st.markdown("---")
-            st.subheader("📱 رمز QR الموحد للفرع (جاهز للطباعة)")
-            
-            active_qr_url = get_setting("app_url")
-            
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_H,
-                box_size=10,
-                border=3
-            )
-            qr.add_data(active_qr_url)
-            qr.make(fit=True)
-            img_qr = qr.make_image(fill_color="#10233F", back_color="white")
-            
-            qr_buf = io.BytesIO()
-            img_qr.save(qr_buf, format="PNG")
-            
-            col_qr1, col_qr2 = st.columns([1, 2])
-            with col_qr1:
-                st.image(qr_buf.getvalue(), caption="رمز QR للفرع", width=220)
-            with col_qr2:
-                st.write(f"الرابط المضمّن في الـ QR حالياً:\n`{active_qr_url}`")
-                st.download_button(
-                    label="📥 تحميل صورة الـ QR للطباعة",
-                    data=qr_buf.getvalue(),
-                    file_name="Branch_Attendance_QR.png",
-                    mime="image/png"
-                )
+# 8. البطاقات الملونة الأربع السفلي
+st.divider()
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.success("🛡️ **أمان البيانات**\n\nحماية وخصوصية عالية")
+with col2:
+    st.info("⏱️ **دقة في التسجيل**\n\nوقت الحضور والانصراف")
+with col3:
+    st.warning("📍 **تحديد الموقع**\n\nضمن نطاق الفرع")
+with col4:
+    st.error("👥 **إدارة فعالة**\n\nلمواردنا البشرية")
+
+st.caption("— تصميم وتنفيذ أحمد الجنزوري (مدير الفرع) —")
