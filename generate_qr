@@ -1,0 +1,20 @@
+import qrcode
+
+# استبدل هذا الرابط برابط تطبيقك الفعلي
+APP_URL = "https://employee-attendance.streamlit.app"
+
+qr = qrcode.QRCode(
+    version=1,
+    error_correction=qrcode.constants.ERROR_CORRECT_H,
+    box_size=12,
+    border=4,
+)
+
+qr.add_data(APP_URL)
+qr.make(fit=True)
+
+# استخراج الصورة باللون الكحلي الداكن المعتمد للفرع
+img = qr.make_image(fill_color="#10233F", back_color="white")
+img.save("branch_attendance_qr.png")
+
+print("✅ تم حفظ صورة الـ QR بنجاح باسم 'branch_attendance_qr.png'")
