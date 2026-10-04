@@ -8,9 +8,9 @@ from streamlit_js_eval import get_geolocation
 import os
 
 # ==========================================
-# 1. الإعدادات العامة للشعار والفرع
+# 1. الإعدادات العامة للعنوان والشعار
 # ==========================================
-PROJECT_NAME = "Employee Attendance"
+PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
 
 # إحداثيات موقع الفرع (قم بتحديثها طبقاً لموقعك الفعلي)
@@ -22,14 +22,44 @@ MAX_DISTANCE_METERS = 50.0
 BRANCH_PUBLIC_IP = "197.35.120.45"
 
 # كلمة مرور الإدارة
-ADMIN_PASSWORD = "123456"
+ADMIN_PASSWORD = "admin_giza_2026"
 
 # ==========================================
-# 2. تهيئة الواجهة بدون شعار في الجانب
+# 2. تهيئة الواجهة ودعم اتجاه اليمين إلى اليسار (RTL)
 # ==========================================
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
-st.sidebar.title(f"🏢 {PROJECT_NAME}")
+# إضافة CSS لضبط محاذاة كافة العناصر من اليمين إلى اليسار
+st.markdown("""
+    <style>
+        /* اتجاه الصفحة والنصوص بالكامل */
+        html, body, [class*="css"], .stApp {
+            direction: rtl;
+            text-align: right;
+        }
+        /* محاذاة القائمة الجانبية */
+        section[data-testid="stSidebar"] {
+            direction: rtl;
+            text-align: right;
+        }
+        /* محاذاة حقول الإدخال والنصوص داخل النموذج */
+        .stTextInput input, .stSelectbox select, .stRadio div {
+            direction: rtl;
+            text-align: right;
+        }
+        /* محاذاة الجداول */
+        .stDataFrame {
+            direction: rtl;
+        }
+        /* محاذاة تنبيهات الأخطاء والنجاح */
+        .element-container, .stAlert {
+            direction: rtl;
+            text-align: right;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+st.sidebar.title(PROJECT_NAME)
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"])
 
 # ==========================================
@@ -50,11 +80,10 @@ def get_user_ip():
     except:
         return None
 
-# الاتصال بقاعدة البيانات وإرشادات الجداول
+# الاتصال بقاعدة البيانات
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
 
-# جدول الحضور والانصراف
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attendance_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +97,6 @@ cursor.execute('''
     )
 ''')
 
-# جدول بيانات الموظفين بالفرع
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS employees (
         phone TEXT PRIMARY KEY,
@@ -79,7 +107,6 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# استرجاع قائمة الموظفين المفعلين
 def get_active_employees():
     df_emp = pd.read_sql_query("SELECT phone, emp_name FROM employees WHERE is_active = 1", conn)
     return dict(zip(df_emp['phone'], df_emp['emp_name']))
@@ -94,7 +121,7 @@ if page == "تسجيل الحضور/الانصراف":
             st.image(LOGO_PATH, width=280)
             
     st.title(PROJECT_NAME)
-    st.caption("بوابة تسجيل الحضور الذكية بالفرع")
+    st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
     st.info("📲 يرجى الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
     
     user_ip = get_user_ip()
@@ -111,7 +138,7 @@ if page == "تسجيل الحضور/الانصراف":
         is_gps_ok = (distance <= MAX_DISTANCE_METERS)
         
         if not is_wifi_ok:
-            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (IP الحالي: {user_ip})")
+            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (عنوان IP الحالي: {user_ip})")
         elif not is_gps_ok:
             st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(MAX_DISTANCE_METERS)}m")
         else:
@@ -151,11 +178,29 @@ elif page == "لوحة تحكم الإدارة":
             
     st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
-    pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
-    
-    if pwd == ADMIN_PASSWORD:
-        st.success("تم تسجيل الدخول بنجاح.")
-        
+    # تهيئة حالة تسجيل الدخول في session_state
+    if "admin_logged_in" not in st.session_state:
+        st.session_state["admin_logged_in"] = False
+
+    # نموذج تسجيل الدخول عند عدم توفر الجلسة النشطة
+    if not st.session_state["admin_logged_in"]:
+        with st.form("login_form"):
+            pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
+            login_btn = st.form_submit_button("دخول")
+            
+            if login_btn:
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state["admin_logged_in"] = True
+                    st.success("تم تسجيل الدخول بنجاح.")
+                    st.rerun()
+                else:
+                    st.error("كلمة المرور غير صحيحة!")
+    else:
+        # زر تسجيل الخروج في أعلى الصفحة
+        if st.button("🚪 تسجيل الخروج"):
+            st.session_state["admin_logged_in"] = False
+            st.rerun()
+
         tab1, tab2 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين بالفرع"])
         
         # ----------------- التبويب الأول: سجلات الحضور -----------------
@@ -172,20 +217,27 @@ elif page == "لوحة تحكم الإدارة":
             st.download_button(
                 label="📥 تحميل التقرير الشامل (Excel)",
                 data=buffer.getvalue(),
-                file_name=f"Employee_Attendance_Report_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
+                file_name=f"Attendance_Report_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
         # ----------------- التبويب الثاني: إدارة الموظفين -----------------
         with tab2:
-            st.subheader("إدارة قائمة الموظفين بالفرع (إضافة / تعديل / حذف)")
+            st.subheader("إدارة قائمة الموظفين بالفرع")
             
+            if "new_phone_val" not in st.session_state:
+                st.session_state["new_phone_val"] = ""
+            if "new_name_val" not in st.session_state:
+                st.session_state["new_name_val"] = ""
+            if "new_job_val" not in st.session_state:
+                st.session_state["new_job_val"] = "موظف"
+
             # 1. إضافة موظف جديد
             with st.expander("➕ إضافة موظف جديد"):
                 with st.form("add_emp_form"):
-                    new_phone = st.text_input("رقم الموبايل (مثال: 01012345671):", max_chars=11)
-                    new_name = st.text_input("اسم الموظف الثلاثي:")
-                    new_job = st.text_input("المسمى الوظيفي:", value="موظف")
+                    new_phone = st.text_input("رقم الموبايل (مثال: 01012345671):", value=st.session_state["new_phone_val"], max_chars=11)
+                    new_name = st.text_input("اسم الموظف الثلاثي:", value=st.session_state["new_name_val"])
+                    new_job = st.text_input("المسمى الوظيفي:", value=st.session_state["new_job_val"])
                     
                     add_btn = st.form_submit_button("حفظ الموظف")
                     if add_btn:
@@ -195,6 +247,10 @@ elif page == "لوحة تحكم الإدارة":
                                                (new_phone.strip(), new_name.strip(), new_job.strip()))
                                 conn.commit()
                                 st.success(f"تمت إضافة الموظف {new_name} بنجاح!")
+                                
+                                st.session_state["new_phone_val"] = ""
+                                st.session_state["new_name_val"] = ""
+                                st.session_state["new_job_val"] = "موظف"
                                 st.rerun()
                             except sqlite3.IntegrityError:
                                 st.error("رقم الموبايل هذا مسجل بالفعل لموظف آخر!")
@@ -234,6 +290,3 @@ elif page == "لوحة تحكم الإدارة":
                         conn.commit()
                         st.warning("تم حذف الموظف من قاعدة البيانات!")
                         st.rerun()
-                        
-    elif pwd != "":
-        st.error("كلمة المرور غير صحيحة!")
