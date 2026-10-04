@@ -13,7 +13,7 @@ import os
 PROJECT_NAME = "Employee Attendance"
 LOGO_PATH = "logo.png"
 
-# إحداثيات موقع الفرع (قم بتحديثها طبقاً لموقعك الفعلي)
+# إحداثيات موقع الفرع
 BRANCH_LAT = 30.0444
 BRANCH_LON = 31.2357
 MAX_DISTANCE_METERS = 50.0
@@ -34,15 +34,12 @@ EMPLOYEES = {
 }
 
 # ==========================================
-# 2. تهيئة الواجهة والشعار
+# 2. تهيئة الواجهة بدون شعار في الجانب
 # ==========================================
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
-if os.path.exists(LOGO_PATH):
-    st.sidebar.image(LOGO_PATH, use_container_width=True)
-else:
-    st.sidebar.title(f"🏢 {PROJECT_NAME}")
-
+# القائمة الجانبية النصية فقط
+st.sidebar.title(f"🏢 {PROJECT_NAME}")
 page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/الانصراف", "لوحة تحكم الإدارة"])
 
 # ==========================================
@@ -83,10 +80,11 @@ conn.commit()
 # 4. الشاشات الرئيسية
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
+    # عرض الشعار كعنصر رئيسي كبير وموسع في منتصف الصفحة
     if os.path.exists(LOGO_PATH):
-        col1, col2, col3 = st.columns([1, 2, 1])
+        col1, col2, col3 = st.columns([1, 3, 1])
         with col2:
-            st.image(LOGO_PATH, width=180)
+            st.image(LOGO_PATH, width=280)
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور الذكية بالفرع")
@@ -138,8 +136,10 @@ if page == "تسجيل الحضور/الانصراف":
 
 elif page == "لوحة تحكم الإدارة":
     if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=120)
-        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.image(LOGO_PATH, width=200)
+            
     st.title(f"🔒 لوحة الإدارة - {PROJECT_NAME}")
     
     pwd = st.text_input("أدخل كلمة مرور المدير:", type="password")
