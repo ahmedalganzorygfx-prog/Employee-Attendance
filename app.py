@@ -12,11 +12,12 @@ import io
 import cv2
 import numpy as np
 import urllib.request
+import random
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 import av
 
 # ==========================================
-# 1. الإعدادات العامة للشعار والبرنامج
+# 1. الإعدادات العامة للشعار والمجلدات
 # ==========================================
 PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
@@ -39,27 +40,7 @@ def get_egypt_datetime():
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
 st.markdown("""
-    <style>
-        html, body, [class*="css"], .stApp {
-            direction: rtl;
-            text-align: right;
-        }
-        section[data-testid="stSidebar"] {
-            direction: rtl;
-            text-align: right;
-        }
-        .stTextInput input, .stSelectbox select, .stRadio div {
-            direction: rtl;
-            text-align: right;
-        }
-        .stDataFrame {
-            direction: rtl;
-        }
-        .element-container, .stAlert {
-            direction: rtl;
-            text-align: right;
-        }
-    </style>
+    
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
@@ -143,10 +124,11 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. تحميل مسارات كاشف الوجوه بأمان
+# 4. تحميل مسارات كاشفات OpenCV الحيوية
 # ==========================================
 FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
 EYE_CASCADE_PATH = "haarcascade_eye.xml"
+SMILE_CASCADE_PATH = "haarcascade_smile.xml"
 
 def download_cascade_if_missing(file_path, url):
     if not os.path.exists(file_path):
@@ -163,9 +145,13 @@ download_cascade_if_missing(
     EYE_CASCADE_PATH, 
     "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_eye.xml"
 )
+download_cascade_if_missing(
+    SMILE_CASCADE_PATH, 
+    "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_smile.xml"
+)
 
 # ==========================================
-# 5. الدوال البرمجية المساعدة ومعالجة الفيديو الحية
+# 5. الدوال البرمجية ومعالجة البث الحي للفيديو
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -222,18 +208,13 @@ def get_active_employees_map():
             }
         return emp_dict
 
-class LivenessVideoProcessor(VideoTransformerBase):
+class DynamicLivenessProcessor(VideoTransformerBase):
     def __init__(self):
-        if os.path.exists(FACE_CASCADE_PATH):
-            self.face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
-        else:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-            
-        if os.path.exists(EYE_CASCADE_PATH):
-            self.eye_cascade = cv2.CascadeClassifier(EYE_CASCADE_PATH)
-        else:
-            self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-            
+        self.face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH if os.path.exists(FACE_CASCADE_PATH) else cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.eye_cascade = cv2.CascadeClassifier(EYE_CASCADE_PATH if os.path.exists(EYE_CASCADE_PATH) else cv2.data.haarcascades + 'haarcascade_eye.xml')
+        self.smile_cascade = cv2.CascadeClassifier(SMILE_CASCADE_PATH if os.path.exists(SMILE_CASCADE_PATH) else cv2.data.haarcascades + 'haarcascade_smile.xml')
+        
+        self.challenge = st.session_state.get("active_challenge", "smile")
         self.liveness_verified = False
         self.captured_frame = None
 
@@ -243,19 +224,30 @@ class LivenessVideoProcessor(VideoTransformerBase):
         
         faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(100, 100))
         
-        status_text = "يرجى النظر للكاميرا والغمز بعينك"
-        box_color = (0, 0, 255)
-        
+        box_color = (0, 0, 255) # أحمر عند الانتظار
+        if self.challenge == "smile":
+            status_text = "ابتسم للكاميرا لتأكيد الحيوية"
+        else:
+            status_text = "انظر للكاميرا واغمز بعينك"
+            
         if len(faces) == 1:
             (x, y, w, h) = faces[0]
             roi_gray = gray[y:y+h, x:x+w]
-            eyes = self.eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.1, minNeighbors=4)
             
-            if len(eyes) >= 1:
+            eyes = self.eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.1, minNeighbors=4)
+            smiles = self.smile_cascade.detectMultiScale(roi_gray, scaleFactor=1.7, minNeighbors=20)
+            
+            # التحقق حسب الحركة المطلوبة عشوائياً
+            if self.challenge == "smile" and len(smiles) >= 1:
                 self.liveness_verified = True
                 self.captured_frame = img.copy()
                 box_color = (0, 255, 0)
-                status_text = "تم التحقق الحي بنجاح! جاهز للتوقيع"
+                status_text = "تم كشف الابتسامة بنجاح! جاهز للتوقيع"
+            elif self.challenge == "blink" and len(eyes) >= 1:
+                self.liveness_verified = True
+                self.captured_frame = img.copy()
+                box_color = (0, 255, 0)
+                status_text = "تم فحص العينين بنجاح! جاهز للتوقيع"
             
             cv2.rectangle(img, (x, y), (x+w, y+h), box_color, 3)
             
@@ -275,7 +267,17 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📹 نظام فحص الحيوية بالبث الحي: انظر للكاميرا والغمز بعينيك لتأكيد الحضور.")
+    
+    # اختيار تحدي حيوي عشوائي لكل عملية تسجيل جديدة
+    if "active_challenge" not in st.session_state:
+        st.session_state["active_challenge"] = random.choice(["smile", "blink"])
+        
+    current_challenge = st.session_state["active_challenge"]
+    
+    if current_challenge == "smile":
+        st.info("😊 المطلوب لتأكيد الحيوية: **ابتسم بوضوح أمام الكاميرا** لتأكيد التوقيع.")
+    else:
+        st.info("👁️️ المطلوب لتأكيد الحيوية: **انظر للكاميرا وقم بالغمز بعينيك** لتأكيد التوقيع.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -305,13 +307,13 @@ if page == "تسجيل الحضور/الانصراف":
             emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
             action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
             
-            st.subheader("📹 بث كاميرا فحص الحيوية المباشر:")
+            st.subheader("📹 بث كاميرا فحص الحيوية التفاعلي:")
             
             webrtc_ctx = webrtc_streamer(
-                key="liveness_detection",
+                key=f"liveness_{current_challenge}",
                 mode=WebRtcMode.SENDRECV,
                 rtc_configuration=RTC_CONFIGURATION,
-                video_processor_factory=LivenessVideoProcessor,
+                video_processor_factory=DynamicLivenessProcessor,
                 media_stream_constraints={"video": True, "audio": False},
                 async_processing=True
             )
@@ -322,7 +324,7 @@ if page == "تسجيل الحضور/الانصراف":
                 if not code_clean:
                     st.warning("⚠️ يرجى إدخال كود الموظف.")
                 elif not webrtc_ctx.video_processor or not webrtc_ctx.video_processor.liveness_verified:
-                    st.error("⛔ فشل فحص الحيوية: يرجى فتح البث المباشر والنظر للكاميرا والغمز لتوثيق حضورك الحي!")
+                    st.error("⛔ فشل فحص الحيوية: يرجى تنفيذ الحركة المطلوبة أمام الكاميرا أولاً لتأكيد حضورك الحي!")
                 elif code_clean in active_employees:
                     emp_info = active_employees[code_clean]
                     emp_name = emp_info["name"]
@@ -347,8 +349,11 @@ if page == "تسجيل الحضور/الانصراف":
                     ''', (code_clean, emp_name, today_date, now_time, action_type, user_ip, distance, photo_filepath))
                     conn.commit()
                     
+                    # اختيار تحدٍ جديد للمرة القادمة
+                    st.session_state["active_challenge"] = random.choice(["smile", "blink"])
+                    
                     st.balloons()
-                    st.success(f"🎥 تم اجتياز فحص الحيوية والتوثيق المباشر بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                    st.success(f"🎥 تم اجتياز الفحص الحيوي والتسجيل بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                 else:
                     st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
