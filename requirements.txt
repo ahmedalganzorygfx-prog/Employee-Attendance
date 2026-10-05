@@ -6,3 +6,6 @@ qrcode
 openpyxl
 pillow
 pytz
+opencv-python-headless
+mediapipe
+streamlit-webrtc
