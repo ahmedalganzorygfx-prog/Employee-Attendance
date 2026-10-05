@@ -73,7 +73,7 @@ cursor.execute('''
     CREATE TABLE IF NOT EXISTS employees (
         emp_code TEXT PRIMARY KEY,
         emp_name TEXT NOT NULL,
-        phone TEXT NOT NULL,
+        phone TEXT,
         job_title TEXT DEFAULT 'موظف',
         is_active INTEGER DEFAULT 1
     )
@@ -134,11 +134,10 @@ def get_user_ip():
         return None
 
 def get_active_employees_map():
-    """جلب بيانات الموظفين المفعلين بالربط بين الكود ورقم الموبايل والاسم"""
+    """جلب بيانات الموظفين المفعلين بالربط بين الكود والاسم ورقم الموبايل"""
     try:
         cursor.execute("SELECT emp_code, emp_name, phone FROM employees WHERE is_active = 1")
         rows = cursor.fetchall()
-        # نرجع معجم بمفتاح الكود ويحتوي على الاسم ورقم الموبايل
         emp_dict = {}
         for code, name, phone in rows:
             emp_dict[str(code).strip()] = {
@@ -152,7 +151,7 @@ def get_active_employees_map():
             CREATE TABLE employees (
                 emp_code TEXT PRIMARY KEY,
                 emp_name TEXT NOT NULL,
-                phone TEXT NOT NULL,
+                phone TEXT,
                 job_title TEXT DEFAULT 'موظف',
                 is_active INTEGER DEFAULT 1
             )
@@ -186,7 +185,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📲 أدخل كودك ورقم موبايلك المسجل بشرط الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
+    st.info("📲 ادخل كودك الخاص بشرط الاتصال بـ Wi-Fi الفرع وتفعيل موقع الـ GPS بالجوال.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -215,38 +214,32 @@ if page == "تسجيل الحضور/الانصراف":
             
             with st.form("attendance_form"):
                 emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
-                emp_phone_input = st.text_input("أدخل رقم الموبايل المسجل بالنظام:", placeholder="مثال: 01012345671", max_chars=11)
                 action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
                 
                 submit_btn = st.form_submit_button("تأكيد التوقيع")
                 
                 if submit_btn:
                     code_clean = emp_code_input.strip()
-                    phone_clean = emp_phone_input.strip()
                     
-                    if not code_clean or not phone_clean:
-                        st.warning("⚠️ يرجى إدخال كود الموظف ورقم الموبايل معاً.")
+                    if not code_clean:
+                        st.warning("⚠️ يرجى إدخال كود الموظف.")
                     elif code_clean in active_employees:
                         emp_info = active_employees[code_clean]
-                        registered_phone = emp_info["phone"]
                         emp_name = emp_info["name"]
+                        registered_phone = emp_info["phone"]
                         
-                        # المطابقة بين رقم الموبايل المدخل والمسجل
-                        if registered_phone and phone_clean != registered_phone:
-                            st.error("❌ رقم الموبايل المدخل غير مطابق لرقم الموبايل المسجل لكود هذا الموظف!")
-                        else:
-                            now_egypt = get_egypt_datetime()
-                            today_date = now_egypt.strftime("%Y-%m-%d")
-                            now_time = now_egypt.strftime("%I:%M:%S %p")
-                            
-                            cursor.execute('''
-                                INSERT INTO attendance_logs (emp_code, emp_name, phone, date, time, action, ip_address, distance_m)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (code_clean, emp_name, phone_clean, today_date, now_time, action_type, user_ip, distance))
-                            conn.commit()
-                            
-                            st.balloons()
-                            st.success(f"تم {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                        now_egypt = get_egypt_datetime()
+                        today_date = now_egypt.strftime("%Y-%m-%d")
+                        now_time = now_egypt.strftime("%I:%M:%S %p")
+                        
+                        cursor.execute('''
+                            INSERT INTO attendance_logs (emp_code, emp_name, phone, date, time, action, ip_address, distance_m)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (code_clean, emp_name, registered_phone, today_date, now_time, action_type, user_ip, distance))
+                        conn.commit()
+                        
+                        st.balloons()
+                        st.success(f"تم {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                     else:
                         st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
@@ -321,17 +314,17 @@ elif page == "لوحة تحكم الإدارة":
                 with st.form("add_emp_form"):
                     new_code = st.text_input("كود الموظف (مثال: 101):", value=st.session_state["new_code_val"])
                     new_name = st.text_input("اسم الموظف الثلاثي:", value=st.session_state["new_name_val"])
-                    new_phone = st.text_input("رقم الموبايل (إجباري):", value=st.session_state["new_phone_val"], max_chars=11)
+                    new_phone = st.text_input("رقم الموبايل (اختياري):", value=st.session_state["new_phone_val"], max_chars=11)
                     new_job = st.text_input("المسمى الوظيفي:", value=st.session_state["new_job_val"])
                     
                     add_btn = st.form_submit_button("حفظ الموظف والكود")
                     if add_btn:
-                        if new_code.strip() and new_name.strip() and new_phone.strip():
+                        if new_code.strip() and new_name.strip():
                             try:
                                 cursor.execute("INSERT INTO employees (emp_code, emp_name, phone, job_title) VALUES (?, ?, ?, ?)",
                                                (new_code.strip(), new_name.strip(), new_phone.strip(), new_job.strip()))
                                 conn.commit()
-                                st.success(f"تمت إضافة الموظف {new_name} بالكود ({new_code}) ورقم الهاتف ({new_phone}) بنجاح!")
+                                st.success(f"تمت إضافة الموظف {new_name} بالكود ({new_code}) بنجاح!")
                                 
                                 st.session_state["new_code_val"] = ""
                                 st.session_state["new_name_val"] = ""
@@ -341,7 +334,7 @@ elif page == "لوحة تحكم الإدارة":
                             except sqlite3.IntegrityError:
                                 st.error("كود الموظف هذا مستخدم بالفعل لموظف آخر!")
                         else:
-                            st.warning("يرجى إدخال كود الموظف، الاسم الثلاثي، ورقم الموبايل الإجباري.")
+                            st.warning("يرجى إدخال كود الموظف والاسم الثلاثي.")
             
             try:
                 df_emp_all = pd.read_sql_query("SELECT emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', phone AS 'رقم الموبايل', job_title AS 'المسمى الوظيفي', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
@@ -350,7 +343,7 @@ elif page == "لوحة تحكم الإدارة":
                 
             st.dataframe(df_emp_all, use_container_width=True)
             
-            with st.expander("✏️ تعديل بيانات وكود موظف"):
+            with st.expander("✏️️ تعديل بيانات وكود موظف"):
                 if not df_emp_all.empty:
                     selected_code = st.selectbox("اختر كود الموظف المراد تعديله:", df_emp_all['كود الموظف'].tolist())
                     emp_data = df_emp_all[df_emp_all['كود الموظف'] == selected_code].iloc[0]
