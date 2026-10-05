@@ -157,9 +157,9 @@ def get_active_employees_map():
             )
         ''')
         sample_employees = [
-            ('101', 'أحمد حسني', '01012345671', 'مدير الفرع', None),
-            ('102', 'محمد علي', '01012345672', 'موظف', None),
-            ('103', 'محمود إبراهيم', '01012345673', 'موظف', None)
+            ('101', 'أحمد حسني الجنزوري', '01069996245', 'مدير الفرع', None),
+            ('102', 'خالد عبدالحكيم هارون', '01120807631', 'عضو IT', None),
+            ('103', 'أحمد محمد عمر', '01201109892', 'عضو تنمية مهنية', None)
         ]
         cursor.executemany("INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, ?, 1)", sample_employees)
         conn.commit()
@@ -199,9 +199,11 @@ if page == "تسجيل الحضور/الانصراف":
     user_agent = get_user_agent()
     active_employees = get_active_employees_map()
     
+    # توليد بصمة فريدة دقيقة بالهاتف والمتصفح
     current_device_id = None
-    if user_agent and user_ip:
-        current_device_id = f"{user_ip}_{hash(user_agent)}"
+    if user_agent:
+        ua_clean = str(user_agent).strip()
+        current_device_id = f"DEV_{abs(hash(ua_clean))}"
 
     if loc and 'coords' in loc and user_ip:
         user_lat = loc['coords']['latitude']
@@ -235,14 +237,14 @@ if page == "تسجيل الحضور/الانصراف":
                         registered_phone = emp_info["phone"]
                         registered_device = emp_info["device_id"]
                         
-                        # 1. فحص إن كان هذا الهاتف مقترناً بموظف آخر بالفعل
+                        # 1. فحص إن كان هذا الهاتف مقترناً بزميل آخر
                         cursor.execute("SELECT emp_code, emp_name FROM employees WHERE device_id=? AND emp_code != ?", (current_device_id, code_clean))
                         other_bound_emp = cursor.fetchone()
                         
-                        if other_bound_emp:
+                        if other_bound_emp and current_device_id:
                             st.error(f"🚫 تعذر التسجيل: هذا الموبايل مقترن مسبقاً بالموظف ({other_bound_emp[1]}). لا يمكن التوقيع لزميل آخر من نفس الهاتف!")
-                        # 2. إن لم يكن للموظف جهاز مسجل، يتم ربطه بهذا الجهاز عند أول توقيع
-                        elif not registered_device:
+                        # 2. ربط الهاتف لأول مرة للموظف
+                        elif not registered_device and current_device_id:
                             cursor.execute("UPDATE employees SET device_id=? WHERE emp_code=?", (current_device_id, code_clean))
                             conn.commit()
                             
@@ -258,8 +260,8 @@ if page == "تسجيل الحضور/الانصراف":
                             
                             st.balloons()
                             st.success(f"📱 تم اقتران موبايلك بكودك وتسجيل {action_type} بنجاح للموظف: **{emp_name}** في تمام الساعة {now_time}")
-                        # 3. التأكد من أن الهاتف المستخدم هو الهاتف المقترن بالكود
-                        elif registered_device != current_device_id:
+                        # 3. التأكد من تطابق الهاتف المسجل
+                        elif registered_device and registered_device != current_device_id:
                             st.error("❌ تعذر التسجيل: كود هذا الموظف مقترن بهاتف آخر! يرجى التوقيع من جهازك المسجل فقط.")
                         else:
                             now_egypt = get_egypt_datetime()
@@ -335,6 +337,15 @@ elif page == "لوحة تحكم الإدارة":
         with tab2:
             st.subheader("إدارة الموظفين وأكواد التوقيع")
             
+            # زر إضافي لتنظيف واقتران كافة الأجهزة للتجربة من جديد
+            if st.button("🧹 مسح اقتران جميع الأجهزة (تصفير الأجهزة المسجلة)", type="secondary"):
+                cursor.execute("UPDATE employees SET device_id=NULL")
+                conn.commit()
+                st.success("تم مسح اقتران كافة الأجهزة! يمكن للجميع الاقتران مجدداً بكود كل موظف.")
+                st.rerun()
+
+            st.markdown("---")
+            
             if "new_code_val" not in st.session_state:
                 st.session_state["new_code_val"] = ""
             if "new_name_val" not in st.session_state:
@@ -377,13 +388,13 @@ elif page == "لوحة تحكم الإدارة":
                 
             st.dataframe(df_emp_all, use_container_width=True)
             
-            with st.expander("🔓 إعادة فك اقتران جهاز موظف (عند تغيير الهاتف)"):
+            with st.expander("🔓 إعادة فك اقتران جهاز موظف معين (عند تغيير الهاتف)"):
                 if not df_emp_all.empty:
                     reset_code = st.selectbox("اختر كود الموظف لفك اقتران هاتفه القديم:", df_emp_all['كود الموظف'].tolist(), key="reset_device_select")
-                    if st.button("إعادة ضبط اقتران الهاتف"):
+                    if st.button("إعادة ضبط اقتران الهاتف للموظف المحفوظ"):
                         cursor.execute("UPDATE employees SET device_id=NULL WHERE emp_code=?", (reset_code,))
                         conn.commit()
-                        st.success(f"تم فك اقتران الهاتف للكود ({reset_code}) بنجاح! يمكن للموظف الاقتران بهاتفه الجديد عند التوقيع القادم.")
+                        st.success(f"تم فك اقتران الهاتف للكود ({reset_code}) بنجاح!")
                         st.rerun()
 
             with st.expander("✏️ تعديل بيانات وكود موظف"):
