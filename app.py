@@ -9,13 +9,17 @@ from streamlit_js_eval import get_geolocation
 import os
 import qrcode
 import io
-import uuid
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والبرنامج
 # ==========================================
 PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
+UPLOADS_DIR = "attendance_selfies"
+
+# إنشاء مجلد حفظ الصور الشخصية إن لم يكن موجوداً
+if not os.path.exists(UPLOADS_DIR):
+    os.makedirs(UPLOADS_DIR)
 
 ADMIN_PASSWORD = "admin_giza_2026"
 
@@ -47,20 +51,26 @@ page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/ا
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
 
-# 1. جدول سجلات الحضور والانصراف
+# 1. جدول سجلات الحضور والانصراف (يشمل مسار صورة السيلفي)
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attendance_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         emp_code TEXT,
         emp_name TEXT,
-        phone TEXT,
         date TEXT,
         time TEXT,
         action TEXT,
         ip_address TEXT,
-        distance_m REAL
+        distance_m REAL,
+        photo_path TEXT
     )
 ''')
+
+try:
+    cursor.execute("ALTER TABLE attendance_logs ADD COLUMN photo_path TEXT")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
 
 # 2. جدول بيانات الموظفين
 cursor.execute('''
@@ -69,16 +79,9 @@ cursor.execute('''
         emp_name TEXT NOT NULL,
         phone TEXT,
         job_title TEXT DEFAULT 'موظف',
-        device_id TEXT,
         is_active INTEGER DEFAULT 1
     )
 ''')
-
-try:
-    cursor.execute("ALTER TABLE employees ADD COLUMN device_id TEXT")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass
 
 # 3. جدول إعدادات النظام
 cursor.execute('''
@@ -116,7 +119,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية المساعدة وإدارة معرف الجهاز
+# 4. الدوال البرمجية المساعدة
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -135,14 +138,13 @@ def get_user_ip():
 
 def get_active_employees_map():
     try:
-        cursor.execute("SELECT emp_code, emp_name, phone, device_id FROM employees WHERE is_active = 1")
+        cursor.execute("SELECT emp_code, emp_name, phone FROM employees WHERE is_active = 1")
         rows = cursor.fetchall()
         emp_dict = {}
-        for code, name, phone, dev_id in rows:
+        for code, name, phone in rows:
             emp_dict[str(code).strip()] = {
                 "name": str(name).strip(),
-                "phone": str(phone).strip() if phone else "",
-                "device_id": str(dev_id).strip() if dev_id else None
+                "phone": str(phone).strip() if phone else ""
             }
         return emp_dict
     except Exception:
@@ -153,34 +155,26 @@ def get_active_employees_map():
                 emp_name TEXT NOT NULL,
                 phone TEXT,
                 job_title TEXT DEFAULT 'موظف',
-                device_id TEXT,
                 is_active INTEGER DEFAULT 1
             )
         ''')
         sample_employees = [
-            ('101', 'أحمد حسني الجنزوري', '01069996245', 'مدير الفرع', None),
-            ('102', 'خالد عبدالحكيم هارون', '01120807631', 'عضو IT', None),
-            ('103', 'أحمد محمد عمر', '01201109892', 'عضو تنمية مهنية', None)
+            ('101', 'أحمد حسني الجنزوري', '01069996245', 'مدير الفرع'),
+            ('102', 'خالد عبدالحكيم هارون', '01120807631', 'عضو IT'),
+            ('103', 'أحمد محمد عمر', '01201109892', 'عضو تنمية مهنية')
         ]
-        cursor.executemany("INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, ?, 1)", sample_employees)
+        cursor.executemany("INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, 1)", sample_employees)
         conn.commit()
         
-        cursor.execute("SELECT emp_code, emp_name, phone, device_id FROM employees WHERE is_active = 1")
+        cursor.execute("SELECT emp_code, emp_name, phone FROM employees WHERE is_active = 1")
         rows = cursor.fetchall()
         emp_dict = {}
-        for code, name, phone, dev_id in rows:
+        for code, name, phone in rows:
             emp_dict[str(code).strip()] = {
                 "name": str(name).strip(),
-                "phone": str(phone).strip() if phone else "",
-                "device_id": str(dev_id).strip() if dev_id else None
+                "phone": str(phone).strip() if phone else ""
             }
         return emp_dict
-
-# توليد رمز جهاز فريد مستقر لكل متصفح جوال
-if "device_token" not in st.session_state:
-    st.session_state["device_token"] = f"MOBILE_{uuid.uuid4().hex[:12].upper()}"
-
-current_device_id = st.session_state["device_token"]
 
 # ==========================================
 # 5. الشاشات الرئيسية للتطبيق
@@ -193,7 +187,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📱 أدخل كودك الخاص. يتم اقتران الهاتف بكود الموظف لمنع التوقيع بالنيابة.")
+    st.info("📸 لتأكيد الحضور: أدخل كودك والتقط صورة سيلفي حية ومباشرة لوجهك.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -220,66 +214,47 @@ if page == "تسجيل الحضور/الانصراف":
         else:
             st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
             
-            with st.form("attendance_form", clear_on_submit=True):
-                emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
-                action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
+            emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
+            action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
+            
+            st.subheader("📸 التقاط صورة سيلفي حية لتأكيد الهوية:")
+            camera_photo = st.camera_input("انقر التقاط صورة شخصية لوجهك")
+            
+            if st.button("تأكيد وتوثيق التوقيع", type="primary"):
+                code_clean = emp_code_input.strip()
                 
-                submit_btn = st.form_submit_button("تأكيد التوقيع")
-                
-                if submit_btn:
-                    code_clean = emp_code_input.strip()
+                if not code_clean:
+                    st.warning("⚠️ يرجى إدخال كود الموظف.")
+                elif camera_photo is None:
+                    st.warning("⚠️ يرجى التقط صورة سيلفي حية عبر الكاميرا لتأكيد التوقيع.")
+                elif code_clean in active_employees:
+                    emp_info = active_employees[code_clean]
+                    emp_name = emp_info["name"]
                     
-                    if not code_clean:
-                        st.warning("⚠️ يرجى إدخال كود الموظف.")
-                    elif code_clean in active_employees:
-                        emp_info = active_employees[code_clean]
-                        emp_name = emp_info["name"]
-                        registered_phone = emp_info["phone"]
-                        registered_device = emp_info["device_id"]
-                        
-                        # 1. فحص إن كان هذا الهاتف مقترناً بموظف آخر
-                        cursor.execute("SELECT emp_code, emp_name FROM employees WHERE device_id=? AND emp_code != ?", (current_device_id, code_clean))
-                        other_bound_emp = cursor.fetchone()
-                        
-                        if other_bound_emp:
-                            st.error(f"🚫 تعذر التسجيل: هذا الموبايل مقترن مسبقاً بالموظف ({other_bound_emp[1]}). لا يمكن التوقيع لزميل آخر من نفس الهاتف!")
-                        # 2. ربط الهاتف لأول مرة للموظف
-                        elif not registered_device:
-                            cursor.execute("UPDATE employees SET device_id=? WHERE emp_code=?", (current_device_id, code_clean))
-                            conn.commit()
-                            
-                            now_egypt = get_egypt_datetime()
-                            today_date = now_egypt.strftime("%Y-%m-%d")
-                            now_time = now_egypt.strftime("%I:%M:%S %p")
-                            
-                            cursor.execute('''
-                                INSERT INTO attendance_logs (emp_code, emp_name, phone, date, time, action, ip_address, distance_m)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (code_clean, emp_name, registered_phone, today_date, now_time, action_type, user_ip, distance))
-                            conn.commit()
-                            
-                            st.balloons()
-                            st.success(f"📱 تم اقتران موبايلك بكودك وتسجيل {action_type} بنجاح للموظف: **{emp_name}** في تمام الساعة {now_time}")
-                        # 3. التأكد من تطابق الهاتف المسجل
-                        elif registered_device != current_device_id:
-                            st.error("❌ تعذر التسجيل: كود هذا الموظف مقترن بهاتف آخر! يرجى التوقيع من جهازك المسجل فقط.")
-                        else:
-                            now_egypt = get_egypt_datetime()
-                            today_date = now_egypt.strftime("%Y-%m-%d")
-                            now_time = now_egypt.strftime("%I:%M:%S %p")
-                            
-                            cursor.execute('''
-                                INSERT INTO attendance_logs (emp_code, emp_name, phone, date, time, action, ip_address, distance_m)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (code_clean, emp_name, registered_phone, today_date, now_time, action_type, user_ip, distance))
-                            conn.commit()
-                            
-                            st.balloons()
-                            st.success(f"تم {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
-                    else:
-                        st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
+                    now_egypt = get_egypt_datetime()
+                    today_date = now_egypt.strftime("%Y-%m-%d")
+                    now_time = now_egypt.strftime("%I:%M:%S %p")
+                    timestamp_str = now_egypt.strftime("%Y%m%d_%H%M%S")
+                    
+                    # حفظ الصورة بالكود والتاريخ
+                    photo_filename = f"{code_clean}_{timestamp_str}.png"
+                    photo_filepath = os.path.join(UPLOADS_DIR, photo_filename)
+                    
+                    with open(photo_filepath, "wb") as f:
+                        f.write(camera_photo.getbuffer())
+                    
+                    cursor.execute('''
+                        INSERT INTO attendance_logs (emp_code, emp_name, date, time, action, ip_address, distance_m, photo_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (code_clean, emp_name, today_date, now_time, action_type, user_ip, distance, photo_filepath))
+                    conn.commit()
+                    
+                    st.balloons()
+                    st.success(f"📸 تم التوثيق وتصوير {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                else:
+                    st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
-        st.warning("⏳ جاري جلب الموقع والشبكة... يرجى السماح بالوصول للـ GPS.")
+        st.warning("⏳ جاري جلب الموقع والشبكة... يرجى السماح بالوصول للـ GPS والكاميرا.")
 
 elif page == "لوحة تحكم الإدارة":
     if os.path.exists(LOGO_PATH):
@@ -309,17 +284,35 @@ elif page == "لوحة تحكم الإدارة":
             st.session_state["admin_logged_in"] = False
             st.rerun()
 
-        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور", "👥 إدارة الموظفين والأكواد", "⚙ إعدادات النظام والـ QR"])
+        tab1, tab2, tab3 = st.tabs(["📊 سجلات الحضور والصور", "👥 إدارة الموظفين والأكواد", "⚙ إعدادات النظام والـ QR"])
         
-        # ----------------- سجلات الحضور -----------------
+        # ----------------- سجلات الحضور والصور -----------------
         with tab1:
+            st.subheader("سجلات الحضور والتوقيعات الموثقة بالصور")
+            
             try:
-                df_logs = pd.read_sql_query("SELECT id, emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', phone AS 'رقم الموبايل', date AS 'التاريخ', time AS 'الوقت', action AS 'الحركة', ip_address AS 'عنوان IP', distance_m AS 'المسافة (متر)' FROM attendance_logs ORDER BY id DESC", conn)
+                df_logs = pd.read_sql_query("SELECT id, emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', date AS 'التاريخ', time AS 'الوقت', action AS 'الحركة', ip_address AS 'عنوان IP', distance_m AS 'المسافة (متر)', photo_path FROM attendance_logs ORDER BY id DESC", conn)
             except Exception:
                 df_logs = pd.DataFrame()
                 
-            st.subheader("سجلات الحضور والتسجيلات")
-            st.dataframe(df_logs, use_container_width=True)
+            if not df_logs.empty:
+                # عرض السجلات ببطاقات مرئية توضح صورة الموظف أثناء التوقيع
+                for idx, row in df_logs.iterrows():
+                    with st.container():
+                        col_text, col_img = st.columns([3, 1])
+                        with col_text:
+                            st.markdown(f"### 👤 {row['اسم الموظف']} (الكود: {row['كود الموظف']})")
+                            st.write(f"📌 **الحركة:** {row['الحركة']} | 📅 **التاريخ:** {row['التاريخ']} | ⏰ **الوقت:** {row['الوقت']}")
+                            st.write(f"🌐 **IP الشبكة:** {row['عنوان IP']} | 📍 **المسافة عن الفرع:** {int(row['المسافة (متر)'])} متر")
+                        with col_img:
+                            p_path = row['photo_path']
+                            if p_path and os.path.exists(p_path):
+                                st.image(p_path, caption="صورة التوقيع الحية", width=130)
+                            else:
+                                st.caption("لا توجد صورة")
+                        st.markdown("---")
+            else:
+                st.info("لا توجد سجلات حضور مسجلة حتى الآن.")
             
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -336,14 +329,6 @@ elif page == "لوحة تحكم الإدارة":
         # ----------------- إدارة الموظفين والأكواد -----------------
         with tab2:
             st.subheader("إدارة الموظفين وأكواد التوقيع")
-            
-            if st.button("🧹 مسح اقتران جميع الأجهزة (تصفير الأجهزة المسجلة)", type="secondary"):
-                cursor.execute("UPDATE employees SET device_id=NULL")
-                conn.commit()
-                st.success("تم مسح اقتران كافة الأجهزة! يمكن للجميع الاقتران مجدداً بكود كل موظف.")
-                st.rerun()
-
-            st.markdown("---")
             
             if "new_code_val" not in st.session_state:
                 st.session_state["new_code_val"] = ""
@@ -365,7 +350,7 @@ elif page == "لوحة تحكم الإدارة":
                     if add_btn:
                         if new_code.strip() and new_name.strip():
                             try:
-                                cursor.execute("INSERT INTO employees (emp_code, emp_name, phone, job_title, device_id) VALUES (?, ?, ?, ?, NULL)",
+                                cursor.execute("INSERT INTO employees (emp_code, emp_name, phone, job_title) VALUES (?, ?, ?, ?)",
                                                (new_code.strip(), new_name.strip(), new_phone.strip(), new_job.strip()))
                                 conn.commit()
                                 st.success(f"تمت إضافة الموظف {new_name} بالكود ({new_code}) بنجاح!")
@@ -381,20 +366,11 @@ elif page == "لوحة تحكم الإدارة":
                             st.warning("يرجى إدخال كود الموظف والاسم الثلاثي.")
             
             try:
-                df_emp_all = pd.read_sql_query("SELECT emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', phone AS 'رقم الموبايل', job_title AS 'المسمى الوظيفي', device_id AS 'معرف الجهاز', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
+                df_emp_all = pd.read_sql_query("SELECT emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', phone AS 'رقم الموبايل', job_title AS 'المسمى الوظيفي', is_active AS 'الحالة (1=مفعل)' FROM employees", conn)
             except Exception:
                 df_emp_all = pd.DataFrame()
                 
             st.dataframe(df_emp_all, use_container_width=True)
-            
-            with st.expander("🔓 إعادة فك اقتران جهاز موظف معين (عند تغيير الهاتف)"):
-                if not df_emp_all.empty:
-                    reset_code = st.selectbox("اختر كود الموظف لفك اقتران هاتفه القديم:", df_emp_all['كود الموظف'].tolist(), key="reset_device_select")
-                    if st.button("إعادة ضبط اقتران الهاتف للموظف المحفوظ"):
-                        cursor.execute("UPDATE employees SET device_id=NULL WHERE emp_code=?", (reset_code,))
-                        conn.commit()
-                        st.success(f"تم فك اقتران الهاتف للكود ({reset_code}) بنجاح!")
-                        st.rerun()
 
             with st.expander("✏️ تعديل بيانات وكود موظف"):
                 if not df_emp_all.empty:
@@ -415,7 +391,7 @@ elif page == "لوحة تحكم الإدارة":
                             st.success("تم تحديث بيانات الموظف بنجاح!")
                             st.rerun()
                             
-            with st.expander("🗑️ حذف موظف"):
+            with st.expander("🗑️️ حذف موظف"):
                 if not df_emp_all.empty:
                     del_code = st.selectbox("اختر كود الموظف المراد حذفه نهائياً:", df_emp_all['كود الموظف'].tolist(), key="del_select")
                     
