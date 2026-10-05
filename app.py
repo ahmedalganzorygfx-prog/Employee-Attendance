@@ -53,7 +53,7 @@ page = st.sidebar.radio("الانتقال إلى:", ["تسجيل الحضور/ا
 conn = sqlite3.connect('employee_attendance.db', check_same_thread=False)
 cursor = conn.cursor()
 
-# 1. جدول سجلات الحضور والانصراف (يشمل مسار الفيديو والصورة المقتطعة)
+# 1. جدول سجلات الحضور والانصراف
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attendance_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +159,7 @@ def get_user_ip():
     try:
         response = requests.get('https://api.ipify.org?format=json', timeout=4)
         return response.json()['ip']
-    except:
+    except Exception:
         return None
 
 def get_active_employees_map():
@@ -205,7 +205,6 @@ def get_active_employees_map():
 def process_and_verify_video(video_bytes_io, save_video_path, save_photo_path):
     """تحليل الفيديو القصير واستخراج لقطة التوثيق الحية وإثبات الحركة"""
     try:
-        # حفظ ملف الفيديو المؤقت
         with open(save_video_path, "wb") as f:
             f.write(video_bytes_io.getbuffer())
 
@@ -234,7 +233,7 @@ def process_and_verify_video(video_bytes_io, save_video_path, save_photo_path):
         cap.release()
 
         if detected_faces == 0:
-            return False, "لم يتم اكتشاف وجه بشرى واضح في فيديو التوثيق! يرجى تصوير الموظف مباشرة."
+            return False, "لم يتم اكتشاف وجه بشري واضح في فيديو التوثيق! يرجى تصوير الموظف مباشرة."
 
         if best_frame is not None:
             cv2.imwrite(save_photo_path, best_frame)
