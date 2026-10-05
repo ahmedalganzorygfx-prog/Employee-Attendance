@@ -7,6 +7,4 @@ openpyxl
 pillow
 pytz
 opencv-python-headless
-streamlit-webrtc
-av
 numpy
