@@ -11,7 +11,7 @@ import qrcode
 import io
 import cv2
 import numpy as np
-import random
+import urllib.request
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 import av
 
@@ -39,7 +39,27 @@ def get_egypt_datetime():
 st.set_page_config(page_title=PROJECT_NAME, page_icon="🏢", layout="centered")
 
 st.markdown("""
-    
+    <style>
+        html, body, [class*="css"], .stApp {
+            direction: rtl;
+            text-align: right;
+        }
+        section[data-testid="stSidebar"] {
+            direction: rtl;
+            text-align: right;
+        }
+        .stTextInput input, .stSelectbox select, .stRadio div {
+            direction: rtl;
+            text-align: right;
+        }
+        .stDataFrame {
+            direction: rtl;
+        }
+        .element-container, .stAlert {
+            direction: rtl;
+            text-align: right;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
 st.sidebar.title(PROJECT_NAME)
@@ -123,7 +143,29 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية المساعدة ومعالجة الفيديو الحية
+# 4. تحميل مسارات كاشف الوجوه بأمان
+# ==========================================
+FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
+EYE_CASCADE_PATH = "haarcascade_eye.xml"
+
+def download_cascade_if_missing(file_path, url):
+    if not os.path.exists(file_path):
+        try:
+            urllib.request.urlretrieve(url, file_path)
+        except Exception:
+            pass
+
+download_cascade_if_missing(
+    FACE_CASCADE_PATH, 
+    "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+)
+download_cascade_if_missing(
+    EYE_CASCADE_PATH, 
+    "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_eye.xml"
+)
+
+# ==========================================
+# 5. الدوال البرمجية المساعدة ومعالجة الفيديو الحية
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -180,11 +222,18 @@ def get_active_employees_map():
             }
         return emp_dict
 
-# معالج الفيديو المباشر للكشف عن ملامح الحركة والحيوية
 class LivenessVideoProcessor(VideoTransformerBase):
     def __init__(self):
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+        if os.path.exists(FACE_CASCADE_PATH):
+            self.face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+        else:
+            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            
+        if os.path.exists(EYE_CASCADE_PATH):
+            self.eye_cascade = cv2.CascadeClassifier(EYE_CASCADE_PATH)
+        else:
+            self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+            
         self.liveness_verified = False
         self.captured_frame = None
 
@@ -195,18 +244,17 @@ class LivenessVideoProcessor(VideoTransformerBase):
         faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(100, 100))
         
         status_text = "يرجى النظر للكاميرا والغمز بعينك"
-        box_color = (0, 0, 255) # أحمر عند انتظار الحركة
+        box_color = (0, 0, 255)
         
         if len(faces) == 1:
             (x, y, w, h) = faces[0]
             roi_gray = gray[y:y+h, x:x+w]
             eyes = self.eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.1, minNeighbors=4)
             
-            # التحقق من وجود حركة حية في إطارات العيون
             if len(eyes) >= 1:
                 self.liveness_verified = True
                 self.captured_frame = img.copy()
-                box_color = (0, 255, 0) # أخضر عند نجاح فحص الحيوية
+                box_color = (0, 255, 0)
                 status_text = "تم التحقق الحي بنجاح! جاهز للتوقيع"
             
             cv2.rectangle(img, (x, y), (x+w, y+h), box_color, 3)
@@ -214,11 +262,10 @@ class LivenessVideoProcessor(VideoTransformerBase):
         cv2.putText(img, status_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, box_color, 2)
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-# إعدادات خادم WebRTC المباشر (STUN Server)
 RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
 # ==========================================
-# 5. الشاشات الرئيسية للتطبيق
+# 6. الشاشات الرئيسية للتطبيق
 # ==========================================
 if page == "تسجيل الحضور/الانصراف":
     if os.path.exists(LOGO_PATH):
@@ -288,7 +335,6 @@ if page == "تسجيل الحضور/الانصراف":
                     photo_filename = f"{code_clean}_{timestamp_str}.png"
                     photo_filepath = os.path.join(UPLOADS_DIR, photo_filename)
                     
-                    # حفظ إطار الفيديو الحي الذي تم تحليله
                     captured_img = webrtc_ctx.video_processor.captured_frame
                     if captured_img is not None:
                         cv2.imwrite(photo_filepath, captured_img)
