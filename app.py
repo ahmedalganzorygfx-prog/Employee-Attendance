@@ -73,7 +73,6 @@ cursor.execute('''
     )
 ''')
 
-# إضافة عمود device_id إن لم يكن موجوداً
 try:
     cursor.execute("ALTER TABLE employees ADD COLUMN device_id TEXT")
     conn.commit()
@@ -89,7 +88,6 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# الرابط الفعلي للتطبيق
 REAL_APP_URL = "https://employee-attendance-dv932asxnr57mmovkwpltp.streamlit.app/"
 
 DEFAULT_SETTINGS = {
@@ -135,7 +133,6 @@ def get_user_ip():
         return None
 
 def get_active_employees_map():
-    """جلب بيانات الموظفين المفعلين بالربط بين الكود والاسم والجهاز"""
     try:
         cursor.execute("SELECT emp_code, emp_name, phone, device_id FROM employees WHERE is_active = 1")
         rows = cursor.fetchall()
@@ -189,7 +186,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📱 أدخل كودك الخاص. سيتم ربط هاتفك تلقائياً بكودك لمنع التوقيع بالنيابة.")
+    st.info("📱 أدخل كودك الخاص. يتم اقتران الهاتف بكود الموظف لمنع التوقيع بالنيابة.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -202,7 +199,6 @@ if page == "تسجيل الحضور/الانصراف":
     user_agent = get_user_agent()
     active_employees = get_active_employees_map()
     
-    # تحويل البصمة البرمجية للهاتف إلى معرّف فريد
     current_device_id = None
     if user_agent and user_ip:
         current_device_id = f"{user_ip}_{hash(user_agent)}"
@@ -222,7 +218,7 @@ if page == "تسجيل الحضور/الانصراف":
         else:
             st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
             
-            with st.form("attendance_form"):
+            with st.form("attendance_form", clear_on_submit=True):
                 emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
                 action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
                 
@@ -239,13 +235,13 @@ if page == "تسجيل الحضور/الانصراف":
                         registered_phone = emp_info["phone"]
                         registered_device = emp_info["device_id"]
                         
-                        # 1. التحقق إن كان هذا الجهاز مقترناً بموظف آخر
+                        # 1. فحص إن كان هذا الهاتف مقترناً بموظف آخر بالفعل
                         cursor.execute("SELECT emp_code, emp_name FROM employees WHERE device_id=? AND emp_code != ?", (current_device_id, code_clean))
                         other_bound_emp = cursor.fetchone()
                         
                         if other_bound_emp:
                             st.error(f"🚫 تعذر التسجيل: هذا الموبايل مقترن مسبقاً بالموظف ({other_bound_emp[1]}). لا يمكن التوقيع لزميل آخر من نفس الهاتف!")
-                        # 2. إن لم يكن للموظف جهاز مسجل، اقترن بهذا الجهاز لأول مرة
+                        # 2. إن لم يكن للموظف جهاز مسجل، يتم ربطه بهذا الجهاز عند أول توقيع
                         elif not registered_device:
                             cursor.execute("UPDATE employees SET device_id=? WHERE emp_code=?", (current_device_id, code_clean))
                             conn.commit()
@@ -262,7 +258,7 @@ if page == "تسجيل الحضور/الانصراف":
                             
                             st.balloons()
                             st.success(f"📱 تم اقتران موبايلك بكودك وتسجيل {action_type} بنجاح للموظف: **{emp_name}** في تمام الساعة {now_time}")
-                        # 3. التحقق من مطابقة الهاتف المسجل سابقاً
+                        # 3. التأكد من أن الهاتف المستخدم هو الهاتف المقترن بالكود
                         elif registered_device != current_device_id:
                             st.error("❌ تعذر التسجيل: كود هذا الموظف مقترن بهاتف آخر! يرجى التوقيع من جهازك المسجل فقط.")
                         else:
