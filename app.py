@@ -11,7 +11,6 @@ import qrcode
 import io
 import cv2
 import numpy as np
-import random
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والبرنامج
@@ -179,34 +178,24 @@ def get_active_employees_map():
         return emp_dict
 
 def verify_liveness_image(image_bytes):
-    """فحص كشف أطراف الوجه والتأكد من وجود ملامح حيوية بالصورة"""
+    """فحص اكتشاف ملامح الوجه للتحقق من التوقيع"""
     try:
         file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         if img is None:
             return False, "الصورة غير صالحة"
             
-        # استخدام كاشف الوجوه المدمج OpenCV Haar Cascade
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-        
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(50, 50))
         
         if len(faces) == 0:
             return False, "لم يتم اكتشاف وجه بشري واضح بالصورة!"
         elif len(faces) > 1:
-            return False, "تم اكتشاف أكثر من وجه بالصورة! يرجى إظهار وجه الموظف فقط."
+            return False, "تم اكتشاف أكثر من وجه بالصورة! يرجى إظهار الموظف فقط."
             
-        (x, y, w, h) = faces[0]
-        roi_gray = gray[y:y+h, x:x+w]
-        eyes = eye_cascade.detectMultiScale(roi_gray)
-        
-        if len(eyes) < 1:
-            return False, "تعذر التحقق من ملامح العينين الحية! يرجى إزالة النظارات المظلمة والإضاءة القوية."
-            
-        return True, "تم التحقق الحي بنجاح"
-    except Exception as e:
+        return True, "تم التحقق بنجاح"
+    except Exception:
         return True, "تم الحفظ"
 
 # ==========================================
@@ -220,7 +209,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("👁️ نظام فحص الحيوية: يرجى إظهار الوجه والعينين مباشرة أمام الكاميرا لتأكيد التوقيع.")
+    st.info("👁️ يرجى إظهار الوجه مباشرة أمام الكاميرا للتوقيع وتوثيق الحضور.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -250,8 +239,8 @@ if page == "تسجيل الحضور/الانصراف":
             emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
             action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
             
-            st.subheader("📸 اختبار فحص الحيوية (إظهار الوجه والعينين مباشرة):")
-            camera_photo = st.camera_input("انقر التقاط صورة شخصية حية")
+            st.subheader("📸 التقط صورة شخصية حية للتوقيع:")
+            camera_photo = st.camera_input("انقر التقاط الصورة")
             
             if st.button("تأكيد وتوثيق التوقيع", type="primary"):
                 code_clean = emp_code_input.strip()
@@ -259,13 +248,12 @@ if page == "تسجيل الحضور/الانصراف":
                 if not code_clean:
                     st.warning("⚠️ يرجى إدخال كود الموظف.")
                 elif camera_photo is None:
-                    st.warning("⚠️ يرجى التقط صورة سيلفي حية عبر الكاميرا لتأكيد الحيوية والتوقيع.")
+                    st.warning("⚠️ يرجى التقاط صورة سيلفي حية عبر الكاميرا لتأكيد التوقيع.")
                 elif code_clean in active_employees:
-                    # تشغيل خوارزمية فحص الحيوية وملامح الوجه
                     is_live, live_msg = verify_liveness_image(camera_photo)
                     
                     if not is_live:
-                        st.error(f"⛔ فشل فحص الحيوية: {live_msg}")
+                        st.error(f"⛔ فشل التحقق: {live_msg}")
                     else:
                         emp_info = active_employees[code_clean]
                         emp_name = emp_info["name"]
@@ -289,7 +277,7 @@ if page == "تسجيل الحضور/الانصراف":
                         conn.commit()
                         
                         st.balloons()
-                        st.success(f"📸 تم فك الحيوية والتوثيق بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                        st.success(f"📸 تم التوثيق والتسجيل بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                 else:
                     st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
@@ -341,11 +329,12 @@ elif page == "لوحة تحكم الإدارة":
                         with col_text:
                             st.markdown(f"### 👤 {row['اسم الموظف']} (الكود: {row['كود الموظف']})")
                             st.write(f"📌 **الحركة:** {row['الحركة']} | 📅 **التاريخ:** {row['التاريخ']} | ⏰ **الوقت:** {row['الوقت']}")
-                            st.write(f"🌐 **IP الشبكة:** {row['عنوان IP']} | 📍 **المسافة عن الفرع:** {int(row['المسافة (متر)'])} متر")
+                            dist_val = int(row['المسافة (متر)']) if pd.notnull(row['المسافة (متر)']) else 0
+                            st.write(f"🌐 **IP الشبكة:** {row['عنوان IP']} | 📍 **المسافة عن الفرع:** {dist_val} متر")
                         with col_img:
                             p_path = row['photo_path']
-                            if p_path and os.path.exists(p_path):
-                                st.image(p_path, caption="صورة فحص الحيوية", width=130)
+                            if isinstance(p_path, str) and p_path and os.path.exists(p_path):
+                                st.image(p_path, caption="صورة التوقيع", width=130)
                             else:
                                 st.caption("لا توجد صورة")
                         st.markdown("---")
@@ -429,7 +418,7 @@ elif page == "لوحة تحكم الإدارة":
                             st.success("تم تحديث بيانات الموظف بنجاح!")
                             st.rerun()
                             
-            with st.expander("🗑️ حذف موظف"):
+            with st.expander("🗑️️ حذف موظف"):
                 if not df_emp_all.empty:
                     del_code = st.selectbox("اختر كود الموظف المراد حذفه نهائياً:", df_emp_all['كود الموظف'].tolist(), key="del_select")
                     
