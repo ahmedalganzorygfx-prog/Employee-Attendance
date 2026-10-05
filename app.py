@@ -5,10 +5,11 @@ import math
 import requests
 from datetime import datetime
 import pytz
-from streamlit_js_eval import get_geolocation, get_user_agent
+from streamlit_js_eval import get_geolocation
 import os
 import qrcode
 import io
+import uuid
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والبرنامج
@@ -115,7 +116,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية المساعدة
+# 4. الدوال البرمجية المساعدة وإدارة معرف الجهاز
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -175,6 +176,12 @@ def get_active_employees_map():
             }
         return emp_dict
 
+# توليد رمز جهاز فريد مستقر لكل متصفح جوال
+if "device_token" not in st.session_state:
+    st.session_state["device_token"] = f"MOBILE_{uuid.uuid4().hex[:12].upper()}"
+
+current_device_id = st.session_state["device_token"]
+
 # ==========================================
 # 5. الشاشات الرئيسية للتطبيق
 # ==========================================
@@ -196,14 +203,7 @@ if page == "تسجيل الحضور/الانصراف":
     
     user_ip = get_user_ip()
     loc = get_geolocation()
-    user_agent = get_user_agent()
     active_employees = get_active_employees_map()
-    
-    # توليد بصمة فريدة دقيقة بالهاتف والمتصفح
-    current_device_id = None
-    if user_agent:
-        ua_clean = str(user_agent).strip()
-        current_device_id = f"DEV_{abs(hash(ua_clean))}"
 
     if loc and 'coords' in loc and user_ip:
         user_lat = loc['coords']['latitude']
@@ -237,14 +237,14 @@ if page == "تسجيل الحضور/الانصراف":
                         registered_phone = emp_info["phone"]
                         registered_device = emp_info["device_id"]
                         
-                        # 1. فحص إن كان هذا الهاتف مقترناً بزميل آخر
+                        # 1. فحص إن كان هذا الهاتف مقترناً بموظف آخر
                         cursor.execute("SELECT emp_code, emp_name FROM employees WHERE device_id=? AND emp_code != ?", (current_device_id, code_clean))
                         other_bound_emp = cursor.fetchone()
                         
-                        if other_bound_emp and current_device_id:
+                        if other_bound_emp:
                             st.error(f"🚫 تعذر التسجيل: هذا الموبايل مقترن مسبقاً بالموظف ({other_bound_emp[1]}). لا يمكن التوقيع لزميل آخر من نفس الهاتف!")
                         # 2. ربط الهاتف لأول مرة للموظف
-                        elif not registered_device and current_device_id:
+                        elif not registered_device:
                             cursor.execute("UPDATE employees SET device_id=? WHERE emp_code=?", (current_device_id, code_clean))
                             conn.commit()
                             
@@ -261,7 +261,7 @@ if page == "تسجيل الحضور/الانصراف":
                             st.balloons()
                             st.success(f"📱 تم اقتران موبايلك بكودك وتسجيل {action_type} بنجاح للموظف: **{emp_name}** في تمام الساعة {now_time}")
                         # 3. التأكد من تطابق الهاتف المسجل
-                        elif registered_device and registered_device != current_device_id:
+                        elif registered_device != current_device_id:
                             st.error("❌ تعذر التسجيل: كود هذا الموظف مقترن بهاتف آخر! يرجى التوقيع من جهازك المسجل فقط.")
                         else:
                             now_egypt = get_egypt_datetime()
@@ -337,7 +337,6 @@ elif page == "لوحة تحكم الإدارة":
         with tab2:
             st.subheader("إدارة الموظفين وأكواد التوقيع")
             
-            # زر إضافي لتنظيف واقتران كافة الأجهزة للتجربة من جديد
             if st.button("🧹 مسح اقتران جميع الأجهزة (تصفير الأجهزة المسجلة)", type="secondary"):
                 cursor.execute("UPDATE employees SET device_id=NULL")
                 conn.commit()
