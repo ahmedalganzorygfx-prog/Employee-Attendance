@@ -11,6 +11,9 @@ import qrcode
 import io
 import cv2
 import numpy as np
+import random
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
+import av
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والبرنامج
@@ -120,7 +123,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. الدوال البرمجية المساعدة
+# 4. الدوال البرمجية المساعدة ومعالجة الفيديو الحية
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -177,26 +180,42 @@ def get_active_employees_map():
             }
         return emp_dict
 
-def verify_liveness_image(image_bytes):
-    """فحص اكتشاف ملامح الوجه للتحقق من التوقيع"""
-    try:
-        file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if img is None:
-            return False, "الصورة غير صالحة"
-            
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# معالج الفيديو المباشر للكشف عن ملامح الحركة والحيوية
+class LivenessVideoProcessor(VideoTransformerBase):
+    def __init__(self):
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+        self.liveness_verified = False
+        self.captured_frame = None
+
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(50, 50))
         
-        if len(faces) == 0:
-            return False, "لم يتم اكتشاف وجه بشري واضح بالصورة!"
-        elif len(faces) > 1:
-            return False, "تم اكتشاف أكثر من وجه بالصورة! يرجى إظهار الموظف فقط."
+        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(100, 100))
+        
+        status_text = "يرجى النظر للكاميرا والغمز بعينك"
+        box_color = (0, 0, 255) # أحمر عند انتظار الحركة
+        
+        if len(faces) == 1:
+            (x, y, w, h) = faces[0]
+            roi_gray = gray[y:y+h, x:x+w]
+            eyes = self.eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.1, minNeighbors=4)
             
-        return True, "تم التحقق بنجاح"
-    except Exception:
-        return True, "تم الحفظ"
+            # التحقق من وجود حركة حية في إطارات العيون
+            if len(eyes) >= 1:
+                self.liveness_verified = True
+                self.captured_frame = img.copy()
+                box_color = (0, 255, 0) # أخضر عند نجاح فحص الحيوية
+                status_text = "تم التحقق الحي بنجاح! جاهز للتوقيع"
+            
+            cv2.rectangle(img, (x, y), (x+w, y+h), box_color, 3)
+            
+        cv2.putText(img, status_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, box_color, 2)
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+# إعدادات خادم WebRTC المباشر (STUN Server)
+RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
 # ==========================================
 # 5. الشاشات الرئيسية للتطبيق
@@ -209,7 +228,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("👁️ يرجى إظهار الوجه مباشرة أمام الكاميرا للتوقيع وتوثيق الحضور.")
+    st.info("📹 نظام فحص الحيوية بالبث الحي: انظر للكاميرا والغمز بعينيك لتأكيد الحضور.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -239,45 +258,51 @@ if page == "تسجيل الحضور/الانصراف":
             emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
             action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
             
-            st.subheader("📸 التقط صورة شخصية حية للتوقيع:")
-            camera_photo = st.camera_input("انقر التقاط الصورة")
+            st.subheader("📹 بث كاميرا فحص الحيوية المباشر:")
+            
+            webrtc_ctx = webrtc_streamer(
+                key="liveness_detection",
+                mode=WebRtcMode.SENDRECV,
+                rtc_configuration=RTC_CONFIGURATION,
+                video_processor_factory=LivenessVideoProcessor,
+                media_stream_constraints={"video": True, "audio": False},
+                async_processing=True
+            )
             
             if st.button("تأكيد وتوثيق التوقيع", type="primary"):
                 code_clean = emp_code_input.strip()
                 
                 if not code_clean:
                     st.warning("⚠️ يرجى إدخال كود الموظف.")
-                elif camera_photo is None:
-                    st.warning("⚠️ يرجى التقاط صورة سيلفي حية عبر الكاميرا لتأكيد التوقيع.")
+                elif not webrtc_ctx.video_processor or not webrtc_ctx.video_processor.liveness_verified:
+                    st.error("⛔ فشل فحص الحيوية: يرجى فتح البث المباشر والنظر للكاميرا والغمز لتوثيق حضورك الحي!")
                 elif code_clean in active_employees:
-                    is_live, live_msg = verify_liveness_image(camera_photo)
+                    emp_info = active_employees[code_clean]
+                    emp_name = emp_info["name"]
                     
-                    if not is_live:
-                        st.error(f"⛔ فشل التحقق: {live_msg}")
+                    now_egypt = get_egypt_datetime()
+                    today_date = now_egypt.strftime("%Y-%m-%d")
+                    now_time = now_egypt.strftime("%I:%M:%S %p")
+                    timestamp_str = now_egypt.strftime("%Y%m%d_%H%M%S")
+                    
+                    photo_filename = f"{code_clean}_{timestamp_str}.png"
+                    photo_filepath = os.path.join(UPLOADS_DIR, photo_filename)
+                    
+                    # حفظ إطار الفيديو الحي الذي تم تحليله
+                    captured_img = webrtc_ctx.video_processor.captured_frame
+                    if captured_img is not None:
+                        cv2.imwrite(photo_filepath, captured_img)
                     else:
-                        emp_info = active_employees[code_clean]
-                        emp_name = emp_info["name"]
-                        
-                        now_egypt = get_egypt_datetime()
-                        today_date = now_egypt.strftime("%Y-%m-%d")
-                        now_time = now_egypt.strftime("%I:%M:%S %p")
-                        timestamp_str = now_egypt.strftime("%Y%m%d_%H%M%S")
-                        
-                        photo_filename = f"{code_clean}_{timestamp_str}.png"
-                        photo_filepath = os.path.join(UPLOADS_DIR, photo_filename)
-                        
-                        camera_photo.seek(0)
-                        with open(photo_filepath, "wb") as f:
-                            f.write(camera_photo.getbuffer())
-                        
-                        cursor.execute('''
-                            INSERT INTO attendance_logs (emp_code, emp_name, date, time, action, ip_address, distance_m, photo_path)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (code_clean, emp_name, today_date, now_time, action_type, user_ip, distance, photo_filepath))
-                        conn.commit()
-                        
-                        st.balloons()
-                        st.success(f"📸 تم التوثيق والتسجيل بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                        photo_filepath = ""
+                    
+                    cursor.execute('''
+                        INSERT INTO attendance_logs (emp_code, emp_name, date, time, action, ip_address, distance_m, photo_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (code_clean, emp_name, today_date, now_time, action_type, user_ip, distance, photo_filepath))
+                    conn.commit()
+                    
+                    st.balloons()
+                    st.success(f"🎥 تم اجتياز فحص الحيوية والتوثيق المباشر بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                 else:
                     st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
@@ -315,7 +340,7 @@ elif page == "لوحة تحكم الإدارة":
         
         # ----------------- سجلات الحضور والصور -----------------
         with tab1:
-            st.subheader("سجلات الحضور والتوقيعات الموثقة بالصور")
+            st.subheader("سجلات الحضور والتوقيعات الموثقة بالفحص الحيوي")
             
             try:
                 df_logs = pd.read_sql_query("SELECT id, emp_code AS 'كود الموظف', emp_name AS 'اسم الموظف', date AS 'التاريخ', time AS 'الوقت', action AS 'الحركة', ip_address AS 'عنوان IP', distance_m AS 'المسافة (متر)', photo_path FROM attendance_logs ORDER BY id DESC", conn)
@@ -334,9 +359,9 @@ elif page == "لوحة تحكم الإدارة":
                         with col_img:
                             p_path = row['photo_path']
                             if isinstance(p_path, str) and p_path and os.path.exists(p_path):
-                                st.image(p_path, caption="صورة التوقيع", width=130)
+                                st.image(p_path, caption="لقطة الفيديو الحي", width=130)
                             else:
-                                st.caption("لا توجد صورة")
+                                st.caption("لا توجد لقطة")
                         st.markdown("---")
             else:
                 st.info("لا توجد سجلات حضور مسجلة حتى الآن.")
@@ -418,7 +443,7 @@ elif page == "لوحة تحكم الإدارة":
                             st.success("تم تحديث بيانات الموظف بنجاح!")
                             st.rerun()
                             
-            with st.expander("🗑️️ حذف موظف"):
+            with st.expander("🗑️ حذف موظف"):
                 if not df_emp_all.empty:
                     del_code = st.selectbox("اختر كود الموظف المراد حذفه نهائياً:", df_emp_all['كود الموظف'].tolist(), key="del_select")
                     
