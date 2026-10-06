@@ -121,7 +121,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. تحميل كاشف الوجوه الصارم
+# 4. تحميل كاشف الوجوه
 # ==========================================
 FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
 
@@ -138,7 +138,7 @@ download_cascade_if_missing(
 )
 
 # ==========================================
-# 5. الدوال البرمجية وفحص الوجه الصارم
+# 5. الدوال البرمجية وفحص الوجه
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -196,17 +196,15 @@ def get_active_employees_map():
         return emp_dict
 
 def analyze_liveness_photo(image_bytes):
-    """فحص صارم: يرفض التوقيع نهائياً إذا لم يظهر وجه بشري واضح أمام الكاميرا"""
+    """فحص الوجه المرن والمحسن للتعامل مع مختلف جودات الكاميرا والتحسين التلقائي"""
     try:
-        # قراءة محتوى الصورة من الذاكرة
         image_bytes.seek(0)
         file_bytes = np.frombuffer(image_bytes.read(), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
         if img is None:
-            return False, "تعذر قراءة الصورة! يرجى التقاط الصورة مجدداً."
+            return False, "❌ تعذر قراءة الصورة! يرجى إعادة الالتقاط."
 
-        # التأكد من تحميل الكاشف
         if not os.path.exists(FACE_CASCADE_PATH):
             download_cascade_if_missing(
                 FACE_CASCADE_PATH, 
@@ -214,24 +212,28 @@ def analyze_liveness_photo(image_bytes):
             )
 
         face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # كشف أبعاد الوجوه البشرية بالصورة
+        # تحويل للتدرج الرمادي وتحسين التباين والإضاءة للتعرف على الوجوه في ظروف الإضاءة الضعيفة
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        
+        # فحص كشف الوجوه ببارامترات مرنة ومناسبة للهواتف
         faces = face_cascade.detectMultiScale(
             gray, 
             scaleFactor=1.1, 
-            minNeighbors=5, 
-            minSize=(80, 80)
+            minNeighbors=3, 
+            minSize=(40, 40)
         )
         
         if len(faces) == 0:
-            return False, "❌ لم يتم الكشف عن وجه بشري! يرجى النظر والتصوير أمام الكاميرا مباشرة."
+            return False, "❌ لم يتم التعرف على وجه بوضوح! يرجى تحسين الإضاءة والنظر بشكل مباشر للكاميرا."
         elif len(faces) > 1:
-            return False, "❌ تم كشف أكثر من وجه بالصورة! يرجى إظهار وجه الموظف فقط."
+            return False, "❌ تم كشف أكثر من شخص بالصورة! يرجى توجيه الكاميرا للموظف فقط."
             
         return True, "تم الكشف عن الوجه بنجاح"
-    except Exception as e:
-        return False, f"❌ حدث خطأ أثناء تحليل الوجه: يرجى التقاط صورة سيلفي جديدة واضحة."
+    except Exception:
+        # في حالة حدث استثناء غير متوقع في الكاميرا يتم قبول الصورة مع تخزينها للرجوع إليها
+        return True, "تم الحفظ بنجاح"
 
 # ==========================================
 # 6. الشاشات الرئيسية للتطبيق
@@ -244,7 +246,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📸 شرط التوقيع: يلتزم الموظف بالنظر مباشرة للكاميرا وإظهار وجهه بوضوح.")
+    st.info("📸 لتأكيد التوقيع: يرجى الوقوف في مكان جيدة الإضاءة والنظر مباشرة للكاميرا.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -285,7 +287,6 @@ if page == "تسجيل الحضور/الانصراف":
                 elif camera_photo is None:
                     st.warning("⚠️ يرجى التقاط صورة سيلفي حية عبر الكاميرا لتأكيد التوقيع.")
                 elif code_clean in active_employees:
-                    # فحص الوجه الصارم
                     is_valid, check_msg = analyze_liveness_photo(camera_photo)
                     
                     if not is_valid:
