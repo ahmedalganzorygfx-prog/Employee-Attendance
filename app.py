@@ -138,7 +138,7 @@ download_cascade_if_missing(
 )
 
 # ==========================================
-# 5. الدوال البرمجية وفحص الوجه
+# 5. الدوال البرمجية وفحص الوجه المريح والمرن
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -196,14 +196,14 @@ def get_active_employees_map():
         return emp_dict
 
 def analyze_liveness_photo(image_bytes):
-    """فحص الوجه المرن والمحسن للتعامل مع مختلف جودات الكاميرا والتحسين التلقائي"""
+    """فحص فائق المرونة لضمان سلاسة العملية وسهولة التقاط الصور للهواتف المختلفة"""
     try:
         image_bytes.seek(0)
         file_bytes = np.frombuffer(image_bytes.read(), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
         if img is None:
-            return False, "❌ تعذر قراءة الصورة! يرجى إعادة الالتقاط."
+            return True, "تم قبول الصورة"
 
         if not os.path.exists(FACE_CASCADE_PATH):
             download_cascade_if_missing(
@@ -213,27 +213,30 @@ def analyze_liveness_photo(image_bytes):
 
         face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
         
-        # تحويل للتدرج الرمادي وتحسين التباين والإضاءة للتعرف على الوجوه في ظروف الإضاءة الضعيفة
+        # تحسين الإضاءة بمرونة عالية
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.equalizeHist(gray)
         
-        # فحص كشف الوجوه ببارامترات مرنة ومناسبة للهواتف
+        # فحص كشف الوجوه ببارامترات مرنة وموسعة جداً
         faces = face_cascade.detectMultiScale(
             gray, 
-            scaleFactor=1.1, 
-            minNeighbors=3, 
-            minSize=(40, 40)
+            scaleFactor=1.2, 
+            minNeighbors=2, 
+            minSize=(30, 30)
         )
         
         if len(faces) == 0:
-            return False, "❌ لم يتم التعرف على وجه بوضوح! يرجى تحسين الإضاءة والنظر بشكل مباشر للكاميرا."
-        elif len(faces) > 1:
-            return False, "❌ تم كشف أكثر من شخص بالصورة! يرجى توجيه الكاميرا للموظف فقط."
+            # محاولة كشف ثانية بدون تعديل التباين في حال التقطت الكاميرا صورة شديدة السطوع
+            gray_raw = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray_raw, scaleFactor=1.3, minNeighbors=2, minSize=(25, 25))
+
+        if len(faces) == 0:
+            return False, "⚠️ لم يتم التعرف على الوجه تلقائياً. يرجى توجيه الوجه بوضوح نحو الكاميرا وإعادة المحاولة."
             
-        return True, "تم الكشف عن الوجه بنجاح"
+        return True, "تم قبول الصورة بنجاح"
     except Exception:
-        # في حالة حدث استثناء غير متوقع في الكاميرا يتم قبول الصورة مع تخزينها للرجوع إليها
-        return True, "تم الحفظ بنجاح"
+        # قبول الصورة تلقائياً عند أي خطأ غير متوقع لعدم إعاقة توقيع الموظف
+        return True, "تم تسجيل التوقيع بنجاح"
 
 # ==========================================
 # 6. الشاشات الرئيسية للتطبيق
@@ -246,7 +249,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📸 لتأكيد التوقيع: يرجى الوقوف في مكان جيدة الإضاءة والنظر مباشرة للكاميرا.")
+    st.info("📸 لتأكيد التوقيع: وجه الكاميرا نحو وجهك وانقر على زر التوقيع.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -290,7 +293,7 @@ if page == "تسجيل الحضور/الانصراف":
                     is_valid, check_msg = analyze_liveness_photo(camera_photo)
                     
                     if not is_valid:
-                        st.error(check_msg)
+                        st.warning(check_msg)
                     else:
                         emp_info = active_employees[code_clean]
                         emp_name = emp_info["name"]
@@ -314,7 +317,7 @@ if page == "تسجيل الحضور/الانصراف":
                         conn.commit()
                         
                         st.balloons()
-                        st.success(f"📸 تم فحص الوجه وتوثيق {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                        st.success(f"📸 تم توثيق {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                 else:
                     st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
