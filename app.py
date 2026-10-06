@@ -158,7 +158,7 @@ def get_user_ip():
     try:
         response = requests.get('https://api.ipify.org?format=json', timeout=4)
         return response.json()['ip']
-    except:
+    except Exception:
         return None
 
 def get_active_employees_map():
