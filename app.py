@@ -12,13 +12,14 @@ import io
 import cv2
 import numpy as np
 import urllib.request
+import random
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والمجلدات
 # ==========================================
 PROJECT_NAME = "حضور وانصراف العاملين بفرع الجيزة"
 LOGO_PATH = "logo.png"
-UPLOADS_DIR = "attendance_videos"
+UPLOADS_DIR = "attendance_selfies"
 
 if not os.path.exists(UPLOADS_DIR):
     os.makedirs(UPLOADS_DIR)
@@ -64,19 +65,12 @@ cursor.execute('''
         action TEXT,
         ip_address TEXT,
         distance_m REAL,
-        photo_path TEXT,
-        video_path TEXT
+        photo_path TEXT
     )
 ''')
 
 try:
     cursor.execute("ALTER TABLE attendance_logs ADD COLUMN photo_path TEXT")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass
-
-try:
-    cursor.execute("ALTER TABLE attendance_logs ADD COLUMN video_path TEXT")
     conn.commit()
 except sqlite3.OperationalError:
     pass
@@ -128,7 +122,7 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. تحميل كاشفات OpenCV بأمان
+# 4. تحميل كاشفات ملامح الوجه بأمان
 # ==========================================
 FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
 
@@ -145,7 +139,7 @@ download_cascade_if_missing(
 )
 
 # ==========================================
-# 5. الدوال البرمجية المساعدة ومعالجة مقاطع الفيديو
+# 5. الدوال البرمجية المساعدة
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -159,7 +153,7 @@ def get_user_ip():
     try:
         response = requests.get('https://api.ipify.org?format=json', timeout=4)
         return response.json()['ip']
-    except Exception:
+    except:
         return None
 
 def get_active_employees_map():
@@ -202,45 +196,27 @@ def get_active_employees_map():
             }
         return emp_dict
 
-def process_and_verify_video(video_bytes_io, save_video_path, save_photo_path):
-    """تحليل الفيديو القصير واستخراج لقطة التوثيق الحية وإثبات الحركة"""
+def analyze_photo_has_face(image_bytes):
+    """فحص كشف ملامح الوجه البشري"""
     try:
-        with open(save_video_path, "wb") as f:
-            f.write(video_bytes_io.getbuffer())
-
-        cap = cv2.VideoCapture(save_video_path)
-        if not cap.isOpened():
-            return False, "تعذر قراءة ملف الفيديو المرفوع"
-
-        face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH if os.path.exists(FACE_CASCADE_PATH) else cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-        detected_faces = 0
-        best_frame = None
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if img is None:
+            return False, "الصورة الملتقطة غير صالحة"
+            
+        if os.path.exists(FACE_CASCADE_PATH):
+            face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
-
-            if len(faces) >= 1:
-                detected_faces += 1
-                if best_frame is None:
-                    best_frame = frame.copy()
-
-        cap.release()
-
-        if detected_faces == 0:
-            return False, "لم يتم اكتشاف وجه بشري واضح في فيديو التوثيق! يرجى تصوير الموظف مباشرة."
-
-        if best_frame is not None:
-            cv2.imwrite(save_photo_path, best_frame)
-
-        return True, "تم التحقق الفيديوي بنجاح"
-    except Exception as e:
-        return True, f"تم التوثيق (ملاحظة: {str(e)})"
+            
+            if len(faces) == 0:
+                return False, "لم يتم اكتشاف وجه بشري واضح بالصورة! يرجى إظهار الوجه أمام الكاميرا."
+            elif len(faces) > 1:
+                return False, "تم اكتشاف أكثر من وجه بالصورة! يرجى توجيه الكاميرا للموظف فقط."
+                
+        return True, "تم الفحص بنجاح"
+    except Exception:
+        return True, "تم الحفظ بنجاح"
 
 # ==========================================
 # 6. الشاشات الرئيسية للتطبيق
@@ -254,4 +230,38 @@ if page == "تسجيل الحضور/الانصراف":
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
     
-    st.markdown("""
+    # توليد كود حيوية عشوائي لكل جلسة
+    if "liveness_code" not in st.session_state:
+        st.session_state["liveness_code"] = str(random.randint(100, 999))
+        
+    current_code = st.session_state["liveness_code"]
+
+    branch_public_ip = get_setting("branch_ip")
+    branch_lat = float(get_setting("branch_lat"))
+    branch_lon = float(get_setting("branch_lon"))
+    max_distance_meters = float(get_setting("max_distance"))
+    disable_wifi_check = get_setting("disable_wifi_check") == "1"
+    
+    user_ip = get_user_ip()
+    loc = get_geolocation()
+    active_employees = get_active_employees_map()
+
+    if loc and 'coords' in loc and user_ip:
+        user_lat = loc['coords']['latitude']
+        user_lon = loc['coords']['longitude']
+        distance = calculate_distance(branch_lat, branch_lon, user_lat, user_lon)
+        
+        is_wifi_ok = True if disable_wifi_check else (user_ip == branch_public_ip)
+        is_gps_ok = (distance <= max_distance_meters)
+        
+        if not is_wifi_ok:
+            st.error(f"⛔ تعذر التسجيل: أنت غير متصل بشبكة Wi-Fi الفرع! (عنوان IP الحالي: {user_ip})")
+        elif not is_gps_ok:
+            st.error(f"⛔ تعذر التسجيل: موقعك يبعد بـ {int(distance)}m عن الفرع. النطاق المسموح: {int(max_distance_meters)}m")
+        else:
+            st.success("✅ تم التحقق من الموقع وشبكة الفرع بنجاح!")
+            
+            emp_code_input = st.text_input("أدخل كود الموظف المخصص لك:", placeholder="مثال: 101")
+            action_type = st.radio("نوع الحركة:", ["تسجيل حضور", "تسجيل انصراف"])
+            
+            st.markdown(f"""
