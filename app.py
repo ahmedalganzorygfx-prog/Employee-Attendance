@@ -12,7 +12,6 @@ import io
 import cv2
 import numpy as np
 import urllib.request
-import random
 
 # ==========================================
 # 1. الإعدادات العامة للشعار والمجلدات
@@ -122,10 +121,9 @@ def set_setting(key, value):
     conn.commit()
 
 # ==========================================
-# 4. تحميل كاشفات ملامح الوجه بأمان تام
+# 4. تحميل كاشف الوجوه الصارم
 # ==========================================
 FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
-EYE_CASCADE_PATH = "haarcascade_eye.xml"
 
 def download_cascade_if_missing(file_path, url):
     if not os.path.exists(file_path):
@@ -138,13 +136,9 @@ download_cascade_if_missing(
     FACE_CASCADE_PATH, 
     "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
 )
-download_cascade_if_missing(
-    EYE_CASCADE_PATH, 
-    "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_eye.xml"
-)
 
 # ==========================================
-# 5. الدوال البرمجية وفحص الصورة الحية
+# 5. الدوال البرمجية وفحص الوجه الصارم
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -202,26 +196,42 @@ def get_active_employees_map():
         return emp_dict
 
 def analyze_liveness_photo(image_bytes):
-    """فحص ملامح الوجه للتأكد من وجود صورة سيلفي حية حقيقية للموظف"""
+    """فحص صارم: يرفض التوقيع نهائياً إذا لم يظهر وجه بشري واضح أمام الكاميرا"""
     try:
-        file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
+        # قراءة محتوى الصورة من الذاكرة
+        image_bytes.seek(0)
+        file_bytes = np.frombuffer(image_bytes.read(), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        
         if img is None:
-            return False, "الصورة الملتقطة غير صالحة"
+            return False, "تعذر قراءة الصورة! يرجى التقاط الصورة مجدداً."
+
+        # التأكد من تحميل الكاشف
+        if not os.path.exists(FACE_CASCADE_PATH):
+            download_cascade_if_missing(
+                FACE_CASCADE_PATH, 
+                "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+            )
+
+        face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # كشف أبعاد الوجوه البشرية بالصورة
+        faces = face_cascade.detectMultiScale(
+            gray, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(80, 80)
+        )
+        
+        if len(faces) == 0:
+            return False, "❌ لم يتم الكشف عن وجه بشري! يرجى النظر والتصوير أمام الكاميرا مباشرة."
+        elif len(faces) > 1:
+            return False, "❌ تم كشف أكثر من وجه بالصورة! يرجى إظهار وجه الموظف فقط."
             
-        if os.path.exists(FACE_CASCADE_PATH):
-            face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
-            
-            if len(faces) == 0:
-                return False, "لم يتم اكتشاف وجه بشري واضح بالصورة! يرجى النظر مباشرة للبدء."
-            elif len(faces) > 1:
-                return False, "تم اكتشاف أكثر من وجه بالصورة! يرجى توجيه الكاميرا نحو الموظف فقط."
-                
-        return True, "تم الفحص بنجاح"
-    except Exception:
-        return True, "تم الحفظ بنجاح"
+        return True, "تم الكشف عن الوجه بنجاح"
+    except Exception as e:
+        return False, f"❌ حدث خطأ أثناء تحليل الوجه: يرجى التقاط صورة سيلفي جديدة واضحة."
 
 # ==========================================
 # 6. الشاشات الرئيسية للتطبيق
@@ -234,7 +244,7 @@ if page == "تسجيل الحضور/الانصراف":
             
     st.title(PROJECT_NAME)
     st.caption("بوابة تسجيل الحضور والأنصراف الرقمية بالفرع")
-    st.info("📸 لتأكيد التوقيع: أدخل كودك والتقط صورة سيلفي مباشرة لوجهك.")
+    st.info("📸 شرط التوقيع: يلتزم الموظف بالنظر مباشرة للكاميرا وإظهار وجهه بوضوح.")
     
     branch_public_ip = get_setting("branch_ip")
     branch_lat = float(get_setting("branch_lat"))
@@ -275,11 +285,11 @@ if page == "تسجيل الحضور/الانصراف":
                 elif camera_photo is None:
                     st.warning("⚠️ يرجى التقاط صورة سيلفي حية عبر الكاميرا لتأكيد التوقيع.")
                 elif code_clean in active_employees:
-                    # فحص ملاءمة الوجه بالصورة
+                    # فحص الوجه الصارم
                     is_valid, check_msg = analyze_liveness_photo(camera_photo)
                     
                     if not is_valid:
-                        st.error(f"⛔ تعذر التوثيق: {check_msg}")
+                        st.error(check_msg)
                     else:
                         emp_info = active_employees[code_clean]
                         emp_name = emp_info["name"]
@@ -303,7 +313,7 @@ if page == "تسجيل الحضور/الانصراف":
                         conn.commit()
                         
                         st.balloons()
-                        st.success(f"📸 تم فحص وتوثيق {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
+                        st.success(f"📸 تم فحص الوجه وتوثيق {action_type} بنجاح للموظف: **{emp_name}** (الكود: {code_clean}) في تمام الساعة {now_time}")
                 else:
                     st.error("❌ كود الموظف غير صحيح أو غير مفعل ضمن قائمة الفرع!")
     else:
